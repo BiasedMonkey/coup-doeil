@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+# captures de travail (celles du dépôt sont dans captures/)
+/*.png
+.claude/

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Coup d'œil
+GenericName=Moniteur système
+Comment=CPU, GPU, RAM et batterie en un coup d'œil, toujours au-dessus
+Exec=python3 @DEST@/coup_doeil.py
+Icon=coup-doeil
+Terminal=false
+Categories=System;Monitor;
+Keywords=moniteur;monitor;cpu;gpu;ram;vram;batterie;watts;
+StartupWMClass=coup_doeil.py

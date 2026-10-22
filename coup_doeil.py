@@ -19,7 +19,8 @@ from pathlib import Path
 if os.environ.get("XDG_SESSION_TYPE") == "wayland" and os.environ.get("DISPLAY"):
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, QSettings, QSize, Qt, QTimer
+from PySide6.QtCore import (QEasingCurve, QEvent, QPoint, QPointF, QRect, QRectF, QSettings, QSize, Qt,
+                            QTimer, QVariantAnimation)
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QGridLayout, QHBoxLayout,
                                QLabel, QLayout, QPushButton, QSizePolicy, QSlider, QVBoxLayout,
@@ -1430,6 +1431,62 @@ class DockTab(QWidget):
             self.mon.undock()
 
 
+class Morph(QWidget):
+    """Transition languette ↔ fenêtre. Plutôt que de redimensionner la vraie
+    fenêtre à chaque image (lent : toute la mise en page serait recalculée), on
+    anime une image du contenu dans une fenêtre déjà à sa taille finale, au fond
+    transparent : une forme arrondie grandit (ou rétrécit) entre la place de la
+    languette et la fenêtre entière, en dévoilant le contenu."""
+
+    DURATION = 230
+
+    def __init__(self, mon):
+        super().__init__(mon)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.hide()
+        self.anim = QVariantAnimation(self, startValue=0.0, endValue=1.0, duration=self.DURATION)
+        self.anim.valueChanged.connect(self.update)
+        self.anim.finished.connect(self.finish)
+        self.done = None
+
+    def run(self, picture, start, end, opacity, curve, done):
+        """start / end : rectangles (coordonnées de la fenêtre) ; opacity : (début, fin)."""
+        self.picture, self.start, self.end, self.opacity, self.done = picture, start, end, opacity, done
+        self.setGeometry(self.parentWidget().rect())
+        self.raise_()
+        self.show()
+        self.anim.setEasingCurve(curve)
+        self.anim.stop()
+        self.anim.start()
+
+    def finish(self):
+        self.hide()
+        done, self.done = self.done, None
+        if done:
+            done()
+
+    def paintEvent(self, _):
+        t = self.anim.currentValue() or 0.0
+        mix = lambda a, b: a + (b - a) * t
+        a, b = self.start, self.end
+        rect = QRectF(mix(a.x(), b.x()), mix(a.y(), b.y()), mix(a.width(), b.width()), mix(a.height(), b.height()))
+        radius = min(mix(9, 14), rect.width() / 2, rect.height() / 2)
+        path = QPainterPath()
+        path.addRoundedRect(rect, radius, radius)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.fillRect(self.rect(), Qt.transparent)            # hors de la forme : transparent
+        p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        p.setClipPath(path)
+        p.setOpacity(mix(*self.opacity))
+        p.drawPixmap(0, 0, self.picture)
+        p.setClipping(False)
+        p.setOpacity(mix(*self.opacity) * 0.6)              # liseré qui suit la forme
+        p.setPen(QPen(QColor(90, 200, 250, 120), 1.2))
+        p.drawPath(path)
+
+
 # ──────────────────────────────── options ────────────────────────────────
 
 AUTOSTART = (Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
@@ -1520,6 +1577,10 @@ class OptionsPanel(QWidget):
         smooth.setChecked(mon.smooth_scroll)
         smooth.toggled.connect(mon.set_smooth_scroll)
         lay.addWidget(smooth)
+        anim = QCheckBox("Animations (languette ↔ fenêtre)")
+        anim.setChecked(mon.animations)
+        anim.toggled.connect(mon.set_animations)
+        lay.addWidget(anim)
         auto = QCheckBox("Lancer à l'ouverture de session")
         auto.setChecked(AUTOSTART.exists())
         auto.toggled.connect(set_autostart)
@@ -1637,6 +1698,8 @@ class Monitor(QWidget):
         root.addWidget(self.dock_tab, 0, Qt.AlignCenter)
         self.dock_tab.hide()
         self.dock_timer = QTimer(self, singleShot=True, interval=450, timeout=self.check_dock)
+        self.morph = Morph(self)
+        self.animations = self.settings.value("animations", True, type=bool)
 
         self.timer = QTimer(self, interval=self.refresh_ms, timeout=self.refresh)
         self.timer.start()
@@ -1962,6 +2025,10 @@ class Monitor(QWidget):
         self.update()
         for g in self.graphs:
             g.update()
+
+    def set_animations(self, on):
+        self.animations = on
+        self.settings.setValue("animations", on)
 
     def set_smooth_scroll(self, on):
         self.smooth_scroll = on
@@ -2424,6 +2491,8 @@ class Monitor(QWidget):
     # --- fenêtre sans bordure : fond + déplacement --------------------------
 
     def paintEvent(self, _):
+        if self.morph.isVisible():
+            return                               # pendant l'animation : la couche peint tout
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         path = QPainterPath()
@@ -2494,9 +2563,9 @@ class Monitor(QWidget):
         self.user_moving = False
         geo = self.screen_geo()
         if self.x() <= geo.left() + DOCK_GAP:
-            self.dock("left")
+            self.dock_animated("left")
         elif self.x() + self.width() - 1 >= geo.right() - DOCK_GAP:
-            self.dock("right")
+            self.dock_animated("right")
 
     FLOAT_INSET = QPoint(6, 6)      # languette « sur place » : là où est le bouton ⊟
 
@@ -2505,7 +2574,33 @@ class Monitor(QWidget):
         mi-hauteur de la fenêtre. La languette peut ensuite être posée n'importe où ;
         la fenêtre se redéploiera centrée verticalement sur elle."""
         mid = self.y() + self.height() // 2
-        self.dock("float", anchor=QPoint(self.x() + self.FLOAT_INSET.x(), mid - self.dock_tab.height() // 2))
+        self.dock_animated("float", anchor=QPoint(self.x() + self.FLOAT_INSET.x(), mid - self.dock_tab.height() // 2))
+
+    def tab_rect(self, edge, anchor=None):
+        """Où sera la languette (coordonnées de l'écran)."""
+        self.update_dock_tab()
+        geo, size = self.screen_geo(), self.dock_tab.size()
+        if edge == "float":
+            pos = anchor
+        else:
+            x = geo.left() + DOCK_MARGIN if edge == "left" else geo.right() - size.width() + 1 - DOCK_MARGIN
+            pos = QPoint(x, self.y() + self.height() // 2 - size.height() // 2)
+        x = max(geo.left(), min(pos.x(), geo.right() - size.width() + 1))
+        y = max(geo.top(), min(pos.y(), geo.bottom() - size.height() + 1))
+        return QRect(QPoint(x, y), size)
+
+    def dock_animated(self, edge, anchor=None):
+        """La fenêtre se resserre vers la place de la languette en s'estompant, puis
+        la languette apparaît."""
+        target = self.tab_rect(edge, anchor)
+        if not self.animations or not self.isVisible() or self.morph.isVisible():
+            self.dock(edge, target.y(), target.topLeft())
+            return
+        picture = self.grab()
+        for w in (self.topbar, self.compact, self.detail):
+            w.hide()
+        self.morph.run(picture, QRect(self.rect()), target.translated(-self.pos()), (1.0, 0.15),
+                       QEasingCurve.InCubic, lambda: self.dock(edge, target.y(), target.topLeft()))
 
     def dock(self, edge, y=None, anchor=None):
         """edge : "left" / "right" (collée à un bord) ou "float" (posée librement)."""
@@ -2527,6 +2622,7 @@ class Monitor(QWidget):
             self.stick_to_edge()                 # seulement : rester dans l'écran
         else:
             self.stick_to_edge(self.y() if y is None else y)
+        self.update()
 
     def stick_to_edge(self, y=None):
         geo = self.screen_geo()
@@ -2568,6 +2664,23 @@ class Monitor(QWidget):
         y = max(geo.top(), min(y, geo.bottom() - self.height() + 1))
         self.move(x, y)
         self.settings.setValue("pos", QPoint(x, y))
+        if self.animations:
+            self.layout().activate()
+            picture = self.grab()
+            for w in (self.topbar, self.detail if self.detailed else self.compact):
+                w.hide()
+            tab = QRect(QPoint(tab_x, tab_mid - self.dock_tab.height() // 2), self.dock_tab.size())
+
+            def reveal():
+                self.topbar.show()
+                (self.detail if self.detailed else self.compact).show()
+                self.update()
+            self.morph.run(picture, tab.translated(-QPoint(x, y)), QRect(self.rect()), (0.35, 1.0),
+                           QEasingCurve.OutCubic, reveal)
+            # dessiner tout de suite : sinon, le temps d'un tour de boucle, la fenêtre
+            # agrandie montre un rectangle noir (contenu pas encore peint)
+            self.morph.repaint()
+            self.repaint()
 
     def update_dock_tab(self):
         d = getattr(self, "data", None)

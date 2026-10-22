@@ -1370,6 +1370,7 @@ def legend(*items):
 # ──────────────────────────────── languette ──────────────────────────────
 
 DOCK_GAP = 2          # px : déposée à moins de ça d'un bord (gauche/droit), la fenêtre s'y range
+DOCK_MARGIN = 6       # px d'espace entre la languette et le bord de l'écran
 
 
 class DockTab(QWidget):
@@ -1400,10 +1401,10 @@ class DockTab(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         w, h, r = self.width(), self.height(), 9
         path = QPainterPath()
-        path.addRoundedRect(QRectF(0, 0, w, h), r, r)
-        flat = QPainterPath()                      # côté collé au bord : angles droits
-        flat.addRect(QRectF(0 if self.edge == "left" else w - r, 0, r, h))
-        p.fillPath(path.united(flat), QColor(18, 20, 26, 245))
+        path.addRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), r, r)
+        p.fillPath(path, QColor(18, 20, 26, 245))
+        p.setPen(QPen(QColor(255, 255, 255, 28), 1))      # léger contour : elle flotte
+        p.drawPath(path)
         p.setPen(QColor(MUTED))
         f = p.font()
         f.setPixelSize(12)
@@ -2513,7 +2514,7 @@ class Monitor(QWidget):
 
     def stick_to_edge(self, y=None):
         geo = self.screen_geo()
-        x = geo.left() if self.docked == "left" else geo.right() - self.width() + 1
+        x = geo.left() + DOCK_MARGIN if self.docked == "left" else geo.right() - self.width() + 1 - DOCK_MARGIN
         y = max(geo.top(), min(self.y() if y is None else y, geo.bottom() - self.height() + 1))
         if (x, y) != (self.x(), self.y()):
             self.move(x, y)

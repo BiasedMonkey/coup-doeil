@@ -19,10 +19,11 @@ from pathlib import Path
 if os.environ.get("XDG_SESSION_TYPE") == "wayland" and os.environ.get("DISPLAY"):
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
-from PySide6.QtCore import QPointF, QRectF, QSettings, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import (QApplication, QGridLayout, QHBoxLayout, QLabel,
-                               QLayout, QPushButton, QSizePolicy, QVBoxLayout, QWidget)
+from PySide6.QtCore import QPoint, QPointF, QRectF, QSettings, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QGridLayout, QHBoxLayout,
+                               QLabel, QLayout, QPushButton, QSizePolicy, QSlider, QVBoxLayout,
+                               QWidget)
 
 HISTORY = 90          # secondes gardées en mémoire (vue détaillée)
 COMPACT_COLS = 60     # secondes affichées en vue compacte
@@ -490,6 +491,14 @@ DRAG_TINT = QColor(90, 200, 250, 28)
 DRAG_BG = over(DRAG_TINT, BG)  # même chose pendant qu'on déplace la carte
 
 
+def set_background_opacity(pct):
+    """Opacité du fond de la fenêtre ; le texte et les courbes restent opaques."""
+    global BG, GRAPH_BG, DRAG_BG
+    BG = QColor(18, 20, 26, round(255 * pct / 100))
+    GRAPH_BG = over(PANEL, BG)
+    DRAG_BG = over(DRAG_TINT, BG)
+
+
 def temp_norm(t):
     """30 °C → 0, 100 °C → 100 : les graphes de température se colorent tôt."""
     return (t - 30) / 70 * 100
@@ -548,28 +557,36 @@ def bspline(v, t):
             + (-3 * u3 + 3 * u2 + 3 * u + 1) * p2 + u3 * p3) / 6
 
 
-def pearl_layout(h):
-    rows = max(4, int(h / PITCH))
-    return rows, h / rows
+def grid_pitch(dpr):
+    """Écart entre les points des courbes, arrondi à un nombre ENTIER de pixels
+    d'écran (4 px réels à 125 %). Sinon chaque point tombe à une position
+    différente entre deux pixels, est dessiné un peu différemment de son voisin,
+    et l'ensemble forme un moiré qui ondule pendant le défilement."""
+    return max(3, round(PITCH * dpr)) / dpr
 
 
-def pearl_points(w, h, vals, dx, x0, x_true, passes=SMOOTH_PASSES):
+def pearl_layout(h, pitch):
+    """Rangées espacées exactement d'un pas de grille, calées sur le bas."""
+    return max(4, int(h / pitch)), pitch
+
+
+def pearl_points(w, h, vals, dx, x0, x_true, pitch, passes=SMOOTH_PASSES):
     """Calcule la courbe perlée (une fois par seconde) sans rien dessiner.
 
-    Colonnes de points en x0 + c·PITCH ; la courbe y est évaluée en x_true + c·PITCH
+    Colonnes de points en x0 + c·pitch ; la courbe y est évaluée en x_true + c·pitch
     (l'écart est rattrapé au moment de l'affichage). Renvoie :
       • groups  : {(couleur, rayon): [points]} → un drawPoints par groupe ;
       • outline : haut de la poussière par colonne, pour découper le fond.
     """
-    rows, dy = pearl_layout(h)
+    rows, dy = pearl_layout(h, pitch)
     smooth = soften(vals, passes)
     raw = defaultdict(list)
     outline = []
     ys = [h - (row + 0.5) * dy for row in range(rows)]
     c = 0
     x = x0
-    while x < w + PITCH:
-        v = bspline(smooth, (x_true + c * PITCH) / dx - 0.5)
+    while x < w + pitch:
+        v = bspline(smooth, (x_true + c * pitch) / dx - 0.5)
         v = 0.0 if v < 0 else 1.0 if v > 1 else v
         top = v * rows
         full = int(top - 1) + 1 if top >= 1 else 0          # rangées de poussière
@@ -583,15 +600,15 @@ def pearl_points(w, h, vals, dx, x0, x_true, passes=SMOOTH_PASSES):
         else:
             covered = 0
         outline.append((x, h - covered * dy))                # fond visible au-dessus
-        x += PITCH
+        x += pitch
         c += 1
     groups = []
     for key, pts in raw.items():
         if key[0] == "perle":
-            color, r = heat_color(key[1] * 2), 1.5
+            color, r = heat_color(key[1] * 2), 1.6
         else:
             row, k = key
-            color, r = faded(heat_color((row + 1) / rows * 100), 0.15 + 0.5 * k / 8), 0.55 + 0.5 * k / 8
+            color, r = faded(heat_color((row + 1) / rows * 100), 0.18 + 0.5 * k / 8), 0.9 + 0.35 * k / 8
         groups.append((color, r, pts))
     return groups, outline
 
@@ -606,7 +623,11 @@ def draw_points(p, groups):
         p.drawPoints(pts)
 
 
-PHASES = 4      # positions intermédiaires préparées par pixel d'écran
+# Positions intermédiaires par pixel d'écran. 1 = le défilement avance pixel
+# d'écran par pixel d'écran : chaque point garde exactement la même forme à tout
+# instant. Avec des positions entre deux pixels (2, 4…), les points d'une grille
+# régulière deviennent tous nets puis tous flous en même temps : l'image respire.
+PHASES = 1
 
 
 class Frame:
@@ -673,10 +694,11 @@ class DotGraph(QWidget):
         if key != self.dust_key:
             # largeur du motif = m colonnes, choisie pour tomber sur un nombre entier
             # de pixels d'écran (sinon le motif se décalerait en se répétant)
-            m = next((m for m in range(1, 17) if abs(m * PITCH * dpr - round(m * PITCH * dpr)) < 1e-6), 4)
-            tw = m * PITCH
-            rows, dy = pearl_layout(h)
-            pen = QPen(DIM, 0.9)
+            pitch = grid_pitch(dpr)                  # nombre entier de pixels d'écran
+            m = 4
+            tw = m * pitch
+            rows, dy = pearl_layout(h, pitch)
+            pen = QPen(DIM, 1.15)
             pen.setCapStyle(Qt.RoundCap)
             tiles = []
             for k in range(PHASES):
@@ -687,7 +709,7 @@ class DotGraph(QWidget):
                 q.setRenderHint(QPainter.Antialiasing)
                 q.setPen(pen)
                 off = -k / PHASES / dpr
-                q.drawPoints([QPointF(PITCH / 2 + j * PITCH + off, h - (r + 0.5) * dy)
+                q.drawPoints([QPointF(pitch / 2 + j * pitch + off, h - (r + 0.5) * dy)
                               for j in range(m) for r in range(rows)])
                 q.end()
                 tiles.append(tile)
@@ -709,24 +731,28 @@ class DotGraph(QWidget):
         # Grille ancrée sur le temps écoulé : la poussière ne saute pas à chaque seconde.
         # On la place sur un nombre ENTIER de pixels d'écran (n) ; le reste (frac)
         # est rattrapé à l'affichage.
-        phase = (self.clock.tick * dx) % PITCH * dpr
+        pitch = grid_pitch(dpr)
+        phase = (self.clock.tick * dx) % pitch * dpr
         n = math.floor(phase)
         frac = phase - n
-        x0 = PITCH / 2 - n / dpr
-        W = w + dx + PITCH
-        groups, outline = pearl_points(W - PITCH, h, self.values(), dx, x0, x0 - frac / dpr)
+        x0 = pitch / 2 - n / dpr
+        W = w + dx + pitch
+        groups, outline = pearl_points(W - pitch, h, self.values(), dx, x0, x0 - frac / dpr, pitch,
+                                       self.clock.smooth_passes)
         clip = QPainterPath()                    # le fond n'apparaît qu'au-dessus de la courbe
         clip.moveTo(0, 0)
         for x, y in outline:
-            clip.lineTo(x - PITCH / 2, y)
-            clip.lineTo(x + PITCH / 2, y)
+            clip.lineTo(x - pitch / 2, y)
+            clip.lineTo(x + pitch / 2, y)
         clip.lineTo(W, 0)
         clip.closeSubpath()
         tiles, tw = self.dust_tiles(h, dpr)
         return Frame(groups, clip, tiles, tw, n, frac, (W, h), dpr)
 
     def shift(self):
-        return min(1.0, (time.monotonic() - self.clock.last_sample) * 1000 / REFRESH_MS)
+        if not self.clock.smooth_scroll:
+            return 1.0          # sans défilement fluide : la courbe avance d'un cran par mesure
+        return min(1.0, (time.monotonic() - self.clock.last_sample) * 1000 / self.clock.refresh_ms)
 
     def offset(self, extra_cols, frac):
         """Décalage à l'écran → (pixels entiers, phase)."""
@@ -869,11 +895,15 @@ class PowerRows(QWidget):
     gros consommateur est toujours en haut, toutes les barres partent du même bord."""
 
     ROW = 15          # hauteur d'une ligne (px)
-    NAME_W = 44       # colonne du nom
     VALUE_W = 74      # colonne « 12.3 W  38 % »
 
-    def __init__(self, names):
+    def __init__(self, names, labels=None):
         super().__init__()
+        self.labels = labels or {}            # clé → nom affiché (ex. « dGPU » → « RX 7700S »)
+        font = self.font()
+        font.setPixelSize(10)
+        fm = QFontMetrics(font)
+        self.name_w = 14 + max(fm.horizontalAdvance(self.labels.get(n, n)) for n in names)
         # Toujours les mêmes lignes, dans un ordre qui ne change que pour un écart
         # net : la hauteur ne bouge jamais, et deux valeurs proches ne s'échangent
         # pas sans arrêt (sinon toute l'interface « saute »).
@@ -909,7 +939,7 @@ class PowerRows(QWidget):
         font = p.font()
         font.setPixelSize(10)
         p.setFont(font)
-        bar_x0, bar_x1 = self.NAME_W, w - self.VALUE_W - 6
+        bar_x0, bar_x1 = self.name_w + 4, w - self.VALUE_W - 6
         cols = max(1, int((bar_x1 - bar_x0) / (PITCH * 1.35)))
         dx = (bar_x1 - bar_x0) / cols
         r = min(dx * 0.45, 2.1)
@@ -925,7 +955,8 @@ class PowerRows(QWidget):
             p.setBrush(color)
             p.drawEllipse(QPointF(4, y), 3, 3)
             p.setPen(QColor(TEXT))
-            p.drawText(QRectF(11, y - 7, self.NAME_W - 11, 14), Qt.AlignVCenter | Qt.AlignLeft, name)
+            p.drawText(QRectF(11, y - 7, self.name_w - 11, 14), Qt.AlignVCenter | Qt.AlignLeft,
+                       self.labels.get(name, name))
             # barre de points : pleine jusqu'à la part du total, le dernier point partiel
             lit = frac * cols
             full, dim = [], []
@@ -1209,6 +1240,119 @@ def legend(*items):
     return "&nbsp;&nbsp;".join(f"<span style='color:{c.name()}'>●</span> {t}" for c, t in items)
 
 
+# ──────────────────────────────── options ────────────────────────────────
+
+AUTOSTART = (Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+             / "autostart" / "coup-doeil.desktop")
+
+
+def set_autostart(on):
+    """Lancer Coup d'œil à l'ouverture de la session (fichier ~/.config/autostart)."""
+    if on:
+        AUTOSTART.parent.mkdir(parents=True, exist_ok=True)
+        AUTOSTART.write_text("[Desktop Entry]\nType=Application\nName=Coup d'œil\n"
+                             f"Exec=python3 \"{Path(__file__).resolve()}\"\n"
+                             "Icon=coup-doeil\nX-GNOME-Autostart-enabled=true\n")
+    else:
+        AUTOSTART.unlink(missing_ok=True)
+
+
+OPTIONS_QSS = f"""
+QLabel {{ color: {TEXT}; font-size: 11px; }}
+QCheckBox {{ color: {TEXT}; font-size: 11px; spacing: 7px; }}
+QCheckBox::indicator {{ width: 13px; height: 13px; border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.05); }}
+QCheckBox::indicator:checked {{ background: #5ac8fa; border-color: #5ac8fa; }}
+QComboBox {{ color: {TEXT}; font-size: 11px; background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 3px 8px; min-width: 76px; }}
+QComboBox::drop-down {{ border: none; width: 16px; }}
+QComboBox QAbstractItemView {{ color: {TEXT}; background: #20232c; selection-background-color: #2f5d73;
+    border: 1px solid rgba(255,255,255,0.12); outline: none; }}
+QSlider::groove:horizontal {{ height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); }}
+QSlider::sub-page:horizontal {{ border-radius: 2px; background: #5ac8fa; }}
+QSlider::handle:horizontal {{ width: 12px; margin: -5px 0; border-radius: 6px; background: {TEXT}; }}
+QPushButton {{ color: {TEXT}; font-size: 11px; background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 5px 10px; }}
+QPushButton:hover {{ background: rgba(90,200,250,0.18); }}
+"""
+
+
+class OptionsPanel(QWidget):
+    """Petit panneau d'options qui s'ouvre sous le bouton ⚙ ; chaque réglage
+    s'applique tout de suite et est retenu."""
+
+    def __init__(self, mon):
+        super().__init__(mon, Qt.Popup | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setStyleSheet(OPTIONS_QSS)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 12, 16, 14)
+        lay.setSpacing(8)
+        lay.addWidget(label("OPTIONS", MUTED, 10, True, 2))
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(8)
+
+        def choix(items, current, on_change):
+            box = QComboBox()
+            for text, value in items:
+                box.addItem(text, value)
+            box.setCurrentIndex(max(0, box.findData(current)))
+            box.currentIndexChanged.connect(lambda i: on_change(box.itemData(i)))
+            return box
+
+        grid.addWidget(QLabel("Rafraîchissement"), 0, 0)
+        grid.addWidget(choix([("0,5 s", 500), ("1 s", 1000), ("2 s", 2000), ("5 s", 5000)],
+                             mon.refresh_ms, mon.set_refresh), 0, 1)
+        grid.addWidget(QLabel("Lissage des courbes"), 1, 0)
+        grid.addWidget(choix([("Aucun", 0), ("Léger", 1), ("Moyen", 2), ("Fort", 4)],
+                             mon.smooth_passes, mon.set_smoothing), 1, 1)
+        grid.addWidget(QLabel("Opacité du fond"), 2, 0)
+        row = QHBoxLayout()
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(30, 100)
+        slider.setValue(round(BG.alphaF() * 100))
+        value = QLabel(f"{slider.value()} %")
+        value.setMinimumWidth(34)
+        slider.valueChanged.connect(lambda v: (value.setText(f"{v} %"), mon.set_bg_opacity(v)))
+        row.addWidget(slider)
+        row.addWidget(value)
+        grid.addLayout(row, 2, 1)
+        lay.addLayout(grid)
+
+        smooth = QCheckBox("Défilement fluide des courbes")
+        smooth.setChecked(mon.smooth_scroll)
+        smooth.toggled.connect(mon.set_smooth_scroll)
+        lay.addWidget(smooth)
+        auto = QCheckBox("Lancer à l'ouverture de session")
+        auto.setChecked(AUTOSTART.exists())
+        auto.toggled.connect(set_autostart)
+        lay.addWidget(auto)
+
+        lay.addSpacing(4)
+        lay.addWidget(label("MODULES AFFICHÉS", MUTED, 10, True, 2))
+        for module_id, name in mon.module_names().items():
+            box = QCheckBox(name)
+            box.setChecked(module_id not in mon.hidden)
+            box.toggled.connect(lambda on, m=module_id: mon.set_module_visible(m, on))
+            lay.addWidget(box)
+
+        lay.addSpacing(4)
+        reset = QPushButton("Réinitialiser la disposition")
+        reset.setToolTip("Ordre des modules et tailles des deux vues par défaut")
+        reset.clicked.connect(lambda: (mon.reset_layout(), self.close()))
+        lay.addWidget(reset)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(QColor(255, 255, 255, 30), 1))
+        p.setBrush(QColor(26, 29, 37, 248))
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+
+
 # ──────────────────────────────── fenêtre ────────────────────────────────
 
 def settings():
@@ -1243,6 +1387,16 @@ class Monitor(QWidget):
         self.graphs = []
         self.tick = 0
         self.last_sample = time.monotonic()
+        self.refresh_ms = self.settings.value("refresh_ms", REFRESH_MS, type=int)
+        self.smooth_scroll = self.settings.value("smooth_scroll", True, type=bool)
+        self.smooth_passes = self.settings.value("smooth_passes", SMOOTH_PASSES, type=int)
+        set_background_opacity(self.settings.value("bg_opacity", 92, type=int))
+        try:
+            self.hidden = set(json.loads(self.settings.value("hidden", "[]") or "[]"))
+        except ValueError:
+            self.hidden = set()
+        self.hist_labels = []
+        self.layouts = {}
 
         root = QVBoxLayout(self)
         root.setSizeConstraint(QLayout.SetMinimumSize)  # taille libre, jamais sous le contenu
@@ -1255,6 +1409,9 @@ class Monitor(QWidget):
         self.expand = self._button("⤢", "Vue détaillée")
         self.expand.setCheckable(True)
         self.expand.toggled.connect(self.set_detailed)
+        self.opts_btn = self._button("⚙", "Options")
+        self.opts_btn.clicked.connect(self.show_options)
+        top.addWidget(self.opts_btn)
         top.addWidget(self.expand)
         self.pin = self._button("📌", "Toujours au-dessus")
         self.pin.setCheckable(True)
@@ -1271,11 +1428,13 @@ class Monitor(QWidget):
         root.addWidget(self.detail)
         self.detail.hide()
 
-        self.timer = QTimer(self, interval=REFRESH_MS, timeout=self.refresh)
+        self.timer = QTimer(self, interval=self.refresh_ms, timeout=self.refresh)
         self.timer.start()
         self.refresh()
         self.anim = QTimer(self, interval=ANIM_MS, timeout=self.animate)
-        self.anim.start()
+        if self.smooth_scroll:
+            self.anim.start()
+        self.apply_hidden()
 
         pos = self.settings.value("pos")
         if pos is not None:
@@ -1366,9 +1525,10 @@ class Monitor(QWidget):
             c.mem = c.add(HalftoneBar(9))
             c.stats = c.add(label("", TEXT, 11))
             c.split_label, c.split_total = c.add_row("Consommation")
-            c.split = c.add(PowerRows(self.part_names()))
+            c.split = c.add(PowerRows(self.part_names(), self.part_labels()))
             cards["bat"] = c
 
+        self.compact_cards = cards
         self.compact_cols = [(w, lay)]
         self.place(cards, self.compact_cols, "order_compact",
                    [["cpu"] + [f"gpu{i}" for i in range(len(self.gpus))] + ["ram", "bat"]])
@@ -1396,7 +1556,7 @@ class Monitor(QWidget):
             self.detail_cols.append((box, v))
 
         c = self.d_cpu = Card("cpu", "CPU", self.cpu.name.split(" w/ ")[0], 20)
-        c.add(label(f"Charge — {HISTORY} s", MUTED, 10))
+        c.add(self.hist_label("Charge"))
         c.add(self.graph("cpu", HISTORY, 64))
         c.add(label("Température", MUTED, 10))
         c.add(self.graph("cpu_temp", HISTORY, 32, temp_norm))
@@ -1416,7 +1576,7 @@ class Monitor(QWidget):
             ("watts", "Puissance batterie"), ("left", "Temps restant"),
             ("uptime", "Allumé depuis"), ("procs", "Programmes")]))
         c.split_label, c.split_total = c.add_row("Consommation par composant")
-        c.split = c.add(PowerRows(self.part_names()))
+        c.split = c.add(PowerRows(self.part_names(), self.part_labels()))
         c.add(label("Programmes — CPU (100 % = 1 thread)", MUTED, 10))
         c.procs = c.add(ProcList(5))
         cards["sys"] = c
@@ -1424,7 +1584,7 @@ class Monitor(QWidget):
         self.d_gpus = []
         for i, gpu in enumerate(self.gpus):
             c = Card(f"gpu{i}", "iGPU" if gpu.integrated else "GPU", short_name(gpu.name), 20)
-            c.add(label(f"Charge — {HISTORY} s", MUTED, 10))
+            c.add(self.hist_label("Charge"))
             c.add(self.graph(f"gpu{i}", HISTORY, 56 if not gpu.integrated else 40))
             if gpu.integrated:
                 c.stats = c.add(StatGrid([
@@ -1452,7 +1612,7 @@ class Monitor(QWidget):
             cards[c.module_id] = c
 
         c = self.d_ram = Card("ram", "RAM", f"{gib(self.ram.total):.0f} Go", 20)
-        c.add(label(f"Utilisation — {HISTORY} s", MUTED, 10))
+        c.add(self.hist_label("Utilisation"))
         c.add(self.graph("ram", HISTORY, 64))
         c.add(label("Swap", MUTED, 10))
         c.add(self.graph("swap", HISTORY, 24))
@@ -1469,6 +1629,7 @@ class Monitor(QWidget):
         c.procs = c.add(ProcList(6))
         cards["ram"] = c
 
+        self.detail_cards = cards
         self.place(cards, self.detail_cols, "order_detail",
                    [["cpu", "sys"], [f"gpu{i}" for i in range(len(self.gpus))], ["ram"]])
         return w
@@ -1477,6 +1638,7 @@ class Monitor(QWidget):
 
     def place(self, cards, columns, key, default):
         """Range les cartes dans les colonnes selon l'ordre enregistré (sinon défaut)."""
+        self.layouts[key] = (cards, columns, default)
         try:
             order = json.loads(self.settings.value(key, "") or "null")
         except ValueError:
@@ -1519,9 +1681,11 @@ class Monitor(QWidget):
         box, lay = min(cols, key=lambda c: abs(c[0].mapFromGlobal(gpos).x() - c[0].width() / 2))
         y = box.mapFromGlobal(gpos).y()
         others = [w for w in self.cards_in(lay) if w is not card]
-        index = sum(1 for o in others if o.geometry().center().y() < y)
+        shown = [w for w in others if w.isVisible()]            # les masqués n'ont pas de place
+        below = next((o for o in shown if o.geometry().center().y() > y), None)
+        index = others.index(below) if below else (others.index(shown[-1]) + 1 if shown else len(others))
         current = next(l for _, l in cols if l.indexOf(card) >= 0)
-        if current is lay and lay.indexOf(card) == index:
+        if current is lay and self.cards_in(lay).index(card) == index:
             return
         current.removeWidget(card)
         self.add_card(lay, card, index)
@@ -1533,6 +1697,89 @@ class Monitor(QWidget):
         compact = self.visible_cols() is self.compact_cols
         order = [[w.module_id for w in self.cards_in(lay)] for _, lay in self.visible_cols()]
         self.settings.setValue("order_compact" if compact else "order_detail", json.dumps(order))
+
+    # --- options --------------------------------------------------------
+
+    def history_text(self):
+        secs = HISTORY * self.refresh_ms / 1000
+        return f"{secs:g} s" if secs < 120 else f"{secs / 60:g} min"
+
+    def hist_label(self, text):
+        l = label(f"{text} — {self.history_text()}", MUTED, 10)
+        self.hist_labels.append((l, text))
+        return l
+
+    def show_options(self):
+        panel = OptionsPanel(self)
+        panel.adjustSize()
+        b = self.opts_btn
+        pos = b.mapToGlobal(QPoint(b.width(), b.height() + 4)) - QPoint(panel.width(), 0)
+        geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        pos.setX(max(geo.left(), min(pos.x(), geo.right() - panel.width())))
+        pos.setY(max(geo.top(), min(pos.y(), geo.bottom() - panel.height())))
+        panel.move(pos)
+        panel.show()
+
+    def set_refresh(self, ms):
+        self.refresh_ms = ms
+        self.timer.setInterval(ms)
+        self.settings.setValue("refresh_ms", ms)
+        for l, text in self.hist_labels:
+            l.setText(f"{text} — {self.history_text()}")
+
+    def set_bg_opacity(self, pct):
+        set_background_opacity(pct)
+        self.settings.setValue("bg_opacity", pct)
+        self.update()
+        for g in self.graphs:
+            g.update()
+
+    def set_smooth_scroll(self, on):
+        self.smooth_scroll = on
+        self.settings.setValue("smooth_scroll", on)
+        (self.anim.start if on else self.anim.stop)()
+        for g in self.graphs:
+            g.shown = None
+            g.update()
+
+    def set_smoothing(self, passes):
+        self.smooth_passes = passes
+        self.settings.setValue("smooth_passes", passes)
+        for g in self.graphs:                      # courbes à recalculer
+            g.cache_key = g.prev = None
+            g.update()
+
+    def module_names(self):
+        names = {"cpu": f"CPU — {short_name(self.cpu.name)}"}
+        for i, g in enumerate(self.gpus):
+            names[f"gpu{i}"] = f"{'iGPU' if g.integrated else 'GPU'} — {short_name(g.name)}"
+        names["ram"] = "RAM"
+        if self.c_bat:
+            names["bat"] = "Batterie"
+        names["sys"] = "Système (grande vue)"
+        return names
+
+    def set_module_visible(self, module_id, on):
+        (self.hidden.discard if on else self.hidden.add)(module_id)
+        self.settings.setValue("hidden", json.dumps(sorted(self.hidden)))
+        self.apply_hidden()
+
+    def apply_hidden(self):
+        for cards, _, _ in self.layouts.values():
+            for module_id, card in cards.items():
+                card.setVisible(module_id not in self.hidden)
+
+    def reset_layout(self):
+        """Ordre des modules et tailles des deux vues par défaut."""
+        for key in ("order_compact", "order_detail", "size_compact", "size_detail"):
+            self.settings.remove(key)
+        for key, (cards, columns, default) in list(self.layouts.items()):
+            for _, lay in columns:
+                while lay.count():
+                    lay.takeAt(0)                  # les cartes restent, on les replace
+            self.place(cards, columns, key, default)
+        self.apply_hidden()
+        self.apply_view_size()
 
     # --- bascule de vue / au-dessus -------------------------------------
 
@@ -1703,6 +1950,19 @@ class Monitor(QWidget):
                      for gpu, g in zip(self.gpus, d["gpus"]) if not gpu.integrated), None)
         return {"cpu": cores if cores is not None else package, "cpu_is_cores": cores is not None,
                 "igpu": apu.get("gfx"), "soc": apu.get("soc"), "package": package, "dgpu": dgpu}
+
+    def part_labels(self):
+        """Noms affichés dans la consommation : le vrai matériel plutôt que « CPU / iGPU »."""
+        igpu = next((g for g in self.gpus if g.integrated), None)
+        dgpu = next((g for g in self.gpus if not g.integrated), None)
+        return {
+            "CPU": short_name(self.cpu.name),
+            "iGPU": short_name(igpu.name) if igpu else "iGPU",                      # Radeon 780M
+            "dGPU": short_name(dgpu.name).replace("Radeon ", "") if dgpu else "dGPU",  # RX 7700S
+            "SoC": "SoC",
+            "Puce": "Puce (autre)",
+            "Reste": "Écran, RAM…",
+        }
 
     def part_names(self):
         names = ["CPU"] + (["iGPU", "SoC", "Puce"] if self.apu else [])

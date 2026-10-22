@@ -24,7 +24,22 @@ en douceur.
 - **📌 Toujours au-dessus** des autres fenêtres.
 - **Modules déplaçables** : attrape la poignée ⠿ à gauche d'un titre (dans la grande vue, d'une colonne à l'autre).
 - **Fenêtre redimensionnable** par ses bords ; les courbes prennent l'espace en plus. Chaque vue retient sa taille, sa position et l'ordre de ses modules.
-- **Consommation par composant** : classement trié (CPU, iGPU, SoC, reste de la puce, dGPU, et sur batterie le « reste du PC » — écran, RAM, SSD, Wi-Fi…).
+- **Consommation par composant** : classement trié, avec le nom du matériel (ex. Ryzen 7 7840HS, Radeon 780M, RX 7700S, SoC, reste de la puce, et sur batterie « écran, RAM… »).
+
+## Options (bouton ⚙)
+
+<img src="captures/options.png" alt="Options" align="right" height="300">
+
+- **Rafraîchissement** : 0,5 / 1 / 2 / 5 s.
+- **Lissage des courbes** : aucun, léger, moyen, fort.
+- **Opacité du fond** : de 30 à 100 % (texte et courbes restent nets).
+- **Défilement fluide** : à couper pour économiser un peu de CPU.
+- **Lancer à l'ouverture de session**.
+- **Modules affichés** : masquer ceux dont tu n'as pas besoin.
+- **Réinitialiser la disposition** : ordre des modules et tailles par défaut.
+
+Chaque réglage s'applique tout de suite et est retenu.
+<br clear="right">
 
 ## Matériel pris en charge
 
@@ -56,7 +71,8 @@ Pour essayer sans installer : `python3 coup_doeil.py`.
 ## Bon à savoir
 
 - **Wayland** : une application Wayland n'a le droit ni de se placer ni de rester au-dessus des autres. Coup d'œil passe donc par XWayland (`QT_QPA_PLATFORM=xcb`), où ces deux fonctions marchent.
-- **Léger** : environ 2–3 % d'un cœur en vue compacte. Les capteurs restent ouverts et sont relus sans réouverture, chaque courbe n'est calculée qu'une fois par seconde, et l'animation ne fait que la faire glisser.
+- **Léger** : environ 2 % d'un cœur en vue compacte. Les capteurs restent ouverts et sont relus sans réouverture, chaque courbe n'est calculée qu'une fois par mesure, et l'animation ne fait que la faire glisser.
+- **Net en mouvement** : les points des courbes sont posés sur une grille calée sur les pixels réels de l'écran (aussi en mise à l'échelle 125 %), et le défilement avance pixel par pixel. Chaque point garde ainsi exactement la même forme : pas de moiré ni de scintillement.
 - **RAM « fantôme » des GPU** : quand un dGPU AMD se met en veille, le pilote recopie le contenu de sa VRAM dans la RAM. Un modèle d'IA local resté chargé peut ainsi occuper plusieurs Go de RAM sans apparaître dans les gestionnaires de tâches. La ligne « GTT » de la carte GPU (grande vue) le révèle.
 
 ## Vérifier
@@ -66,10 +82,11 @@ python3 tests/verifier.py
 ```
 
 Teste sans écran, avec une configuration temporaire : déplacement des modules,
-tailles retenues par vue, et stabilité de l'interface (aucun module ne doit changer
-de taille quand la batterie, le GPU ou les valeurs changent).
+tailles retenues par vue, stabilité de l'interface (aucun module ne doit changer
+de taille quand la batterie, le GPU ou les valeurs changent) et options.
 
 ## Outils
 
 - `outils/galerie.py` : compare en direct plusieurs styles de graphiques en points (nécessite `psutil`).
 - `outils/icones.py` : régénère les propositions d'icône dans `outils/icones/`.
+- `outils/captures.py` : régénère les captures du README avec des données de démonstration.

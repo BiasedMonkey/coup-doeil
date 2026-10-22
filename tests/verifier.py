@@ -260,30 +260,48 @@ QTest.qWait(800)
 verifie("relance : jamais en languette, dépliée à sa dernière place", w.docked is None and not w.detailed
         and w.x() + w.width() - 1 <= 2048 and w.width() > 100, f"{w.size().toTuple()} en {w.pos().toTuple()}")
 
-print("Bouton ⇤ « Ranger au bord »")
+print("Bouton ⊟ : réduire en languette sur place")
 w.close()
 w = m.Monitor()
 w.show()
 w.expand.setChecked(False)
 QTest.qWait(1200)
+w.resize(w.width(), 700)
 w.move(300, 150)
-QTest.qWait(600)
-place, taille = w.pos().toTuple(), w.size().toTuple()
+QTest.qWait(700)
+taille = w.size().toTuple()
+milieu = 150 + w.height() // 2
 w.dock_btn.click()
 QTest.qWait(300)
-verifie("rangée au bord le plus proche (gauche)", w.docked == "left" and w.x() == m.DOCK_MARGIN)
+verifie("réduite sur place, à mi-hauteur de la fenêtre",
+        w.docked == "float" and abs(w.x() - 306) <= 1 and abs(w.y() + w.height() // 2 - milieu) <= 1,
+        f"languette en {w.pos().toTuple()}")
 QTest.mousePress(w.dock_tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
 QTest.mouseRelease(w.dock_tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
 QTest.qWait(300)
-verifie("clic sur la languette : retour exact à sa place", w.docked is None and w.pos().toTuple() == place
-        and w.size().toTuple() == taille, f"{w.pos().toTuple()} (attendu {place})")
+verifie("redéployée sans bouger : retour exact à sa place", w.pos().toTuple() == (300, 150) and w.size().toTuple() == taille,
+        f"{w.pos().toTuple()}")
 QTest.qWait(1200)
-w.move(2048 - w.width() - 300, 150)
-QTest.qWait(600)
 w.dock_btn.click()
 QTest.qWait(300)
-verifie("près du bord droit : rangée à droite", w.docked == "right")
-w.undock()
+w.move(900, 560)                       # on pose la languette ailleurs
+QTest.qWait(700)
+verifie("la languette reste où on la pose", w.pos().toTuple() == (900, 560))
+milieu = 560 + w.height() // 2
+QTest.mousePress(w.dock_tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
+QTest.mouseRelease(w.dock_tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
+QTest.qWait(300)
+verifie("déployée centrée verticalement sur la languette",
+        abs(w.y() + w.height() // 2 - milieu) <= 1 and w.x() == 894, f"{w.pos().toTuple()}")
+QTest.qWait(1200)
+w.dock_btn.click()
+QTest.qWait(300)
+w.move(900, 1280 - w.height())         # languette tout en bas de l'écran
+QTest.qWait(700)
+QTest.mousePress(w.dock_tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
+QTest.mouseRelease(w.dock_tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
+QTest.qWait(300)
+verifie("près du bas de l'écran : décalée pour rester entière", w.y() + w.height() <= 1280, f"{w.pos().toTuple()}")
 
 print()
 print("Tout est bon." if not echecs else f"{len(echecs)} échec(s) : {', '.join(echecs)}")

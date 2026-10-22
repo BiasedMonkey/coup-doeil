@@ -1409,7 +1409,8 @@ class DockTab(QWidget):
         f = p.font()
         f.setPixelSize(12)
         p.setFont(f)
-        p.drawText(QRectF(0, 4, w, 18), Qt.AlignCenter, "▸" if self.edge == "left" else "◂")
+        arrow = {"left": "▸", "right": "◂"}.get(self.edge, "▾")
+        p.drawText(QRectF(0, 4, w, 18), Qt.AlignCenter, arrow)
         p.setPen(Qt.NoPen)
         for i, lvl in enumerate(self.levels):
             p.setBrush(DIM if lvl is None else heat_color(lvl))
@@ -1605,8 +1606,8 @@ class Monitor(QWidget):
         self.topbar = QWidget()
         top = QHBoxLayout(self.topbar)
         top.setContentsMargins(0, 0, 0, 0)
-        self.dock_btn = self._button("⇤", "Ranger au bord de l'écran")
-        self.dock_btn.clicked.connect(self.dock_nearest)
+        self.dock_btn = self._button("⊟", "Réduire en languette, sur place (ultra-compact)")
+        self.dock_btn.clicked.connect(self.collapse_here)
         top.addWidget(self.dock_btn)
         top.addWidget(label("COUP D'ŒIL", MUTED, 10, True, 2))
         top.addStretch()
@@ -2497,20 +2498,19 @@ class Monitor(QWidget):
         elif self.x() + self.width() - 1 >= geo.right() - DOCK_GAP:
             self.dock("right")
 
-    def dock_nearest(self):
-        """Bouton ⇤ : range la fenêtre au bord le plus proche, à la même hauteur ;
-        un clic sur la languette la ramènera exactement à sa place."""
-        geo = self.screen_geo()
-        edge = "left" if self.frameGeometry().center().x() < geo.center().x() else "right"
-        self.dock(edge, restore=self.pos())
+    FLOAT_INSET = QPoint(6, 6)      # languette « sur place » : là où est le bouton ⊟
 
-    def dock(self, edge, y=None, restore=None):
+    def collapse_here(self):
+        """Bouton ⊟ : réduit la fenêtre en languette sur place, à gauche et à
+        mi-hauteur de la fenêtre. La languette peut ensuite être posée n'importe où ;
+        la fenêtre se redéploiera centrée verticalement sur elle."""
+        mid = self.y() + self.height() // 2
+        self.dock("float", anchor=QPoint(self.x() + self.FLOAT_INSET.x(), mid - self.dock_tab.height() // 2))
+
+    def dock(self, edge, y=None, anchor=None):
+        """edge : "left" / "right" (collée à un bord) ou "float" (posée librement)."""
         self.docked = edge
         self.settings.setValue("dock_edge", edge)
-        if restore is not None:
-            self.settings.setValue("predock_pos", restore)   # place d'avant (bouton ⇤)
-        else:
-            self.settings.remove("predock_pos")
         self.settle_until = time.monotonic() + 1.0
         for w in (self.topbar, self.compact, self.detail):
             w.hide()
@@ -2522,11 +2522,20 @@ class Monitor(QWidget):
             QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
         self.layout().activate()
         self.resize(self.dock_tab.size())
-        self.stick_to_edge(self.y() if y is None else y)
+        if edge == "float":
+            self.move(anchor if anchor is not None else self.pos())
+            self.stick_to_edge()                 # seulement : rester dans l'écran
+        else:
+            self.stick_to_edge(self.y() if y is None else y)
 
     def stick_to_edge(self, y=None):
         geo = self.screen_geo()
-        x = geo.left() + DOCK_MARGIN if self.docked == "left" else geo.right() - self.width() + 1 - DOCK_MARGIN
+        if self.docked == "float":               # posée librement : juste rester dans l'écran
+            x = max(geo.left(), min(self.x(), geo.right() - self.width() + 1))
+        elif self.docked == "left":
+            x = geo.left() + DOCK_MARGIN
+        else:
+            x = geo.right() - self.width() + 1 - DOCK_MARGIN
         y = max(geo.top(), min(self.y() if y is None else y, geo.bottom() - self.height() + 1))
         if (x, y) != (self.x(), self.y()):
             self.move(x, y)
@@ -2535,6 +2544,7 @@ class Monitor(QWidget):
     def undock(self):
         if not self.docked:
             return
+        tab_x, tab_mid = self.x(), self.y() + self.height() // 2     # milieu des points
         edge, self.docked = self.docked, None
         self.settings.remove("dock_edge")
         self.settle_until = time.monotonic() + 1.0
@@ -2547,13 +2557,13 @@ class Monitor(QWidget):
             QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
         self.apply_view_size()
         geo = self.screen_geo()
-        back = self.settings.value("predock_pos")
-        self.settings.remove("predock_pos")
-        if isinstance(back, QPoint):          # rangée par le bouton ⇤ : retour à sa place
-            x, y = back.x(), back.y()
+        # La fenêtre se déploie centrée verticalement sur la languette (ses points au
+        # milieu de sa hauteur), décalée juste assez pour rester entière à l'écran.
+        y = tab_mid - self.height() // 2
+        if edge == "float":                   # réduite sur place : à l'endroit de la languette
+            x = tab_x - self.FLOAT_INSET.x()
         else:                                 # rangée en la déposant au bord : à 8 px du bord
             x = geo.left() + 8 if edge == "left" else geo.right() - self.width() - 7
-            y = self.y()
         x = max(geo.left(), min(x, geo.right() - self.width() + 1))
         y = max(geo.top(), min(y, geo.bottom() - self.height() + 1))
         self.move(x, y)

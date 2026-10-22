@@ -36,6 +36,8 @@ for opt in "$@"; do
             mkdir -p "$data/kwin/scripts"
             cp -r "$src/kwin/coup-doeil-coin" "$data/kwin/scripts/"
             kwriteconfig6 --file kwinrc --group Plugins --key coup-doeil-coinEnabled true
+            # décharger l'ancienne version, sinon KWin garde celle déjà en mémoire
+            qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript coup-doeil-coin >/dev/null 2>&1 || true
             qdbus6 org.kde.KWin /KWin reconfigure >/dev/null 2>&1 || true
             echo "Coin supérieur gauche : affiche / masque Coup d'œil (script KWin activé)." ;;
     esac

@@ -1381,7 +1381,7 @@ class DockTab(QWidget):
 
     def __init__(self, mon, host=None):
         super().__init__()
-        self.mon, self.edge, self.levels, self.press = mon, "left", [], None
+        self.mon, self.edge, self.levels, self.press, self.drag_from = mon, "left", [], None, None
         self.host = host or mon            # la fenêtre qu'on déplace en glissant la languette
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Clic : déployer Coup d'œil — glisser : déplacer le long du bord")
@@ -1420,14 +1420,27 @@ class DockTab(QWidget):
 
     def mousePressEvent(self, e):
         self.press = e.globalPosition().toPoint()
+        self.drag_from = None
 
     def mouseMoveEvent(self, e):
-        if self.press is not None and (e.globalPosition().toPoint() - self.press).manhattanLength() > 6:
-            self.press = None
-            self.host.windowHandle().startSystemMove()    # recollée au bord ensuite
+        pos = e.globalPosition().toPoint()
+        if self.drag_from is not None:                    # déplacement « à la main »
+            self.host.move(pos - self.drag_from)
+        elif self.press is not None and (pos - self.press).manhattanLength() > 6:
+            press, self.press = self.press, None
+            if self.host.windowFlags() & Qt.X11BypassWindowManagerHint:
+                # fenêtre non gérée par KWin : c'est à nous de la déplacer (depuis le
+                # point du clic, pour ne pas perdre le début du mouvement)
+                self.drag_from = press - self.host.pos()
+                self.host.move(pos - self.drag_from)
+            else:
+                self.host.windowHandle().startSystemMove()  # recollée au bord ensuite
 
     def mouseReleaseEvent(self, e):
-        if self.press is not None:
+        if self.drag_from is not None:
+            self.drag_from = None
+            self.host.snap_timer.start(0)                 # aimantation au bord tout de suite
+        elif self.press is not None:
             self.press = None
             self.mon.tab_clicked(self.host)
 
@@ -1435,14 +1448,16 @@ class DockTab(QWidget):
 class TabWindow(QWidget):
     """Languette toujours affichée (option) : une petite fenêtre à part, au-dessus
     des autres. Un clic ouvre ou referme la fenêtre principale ; on la pose où l'on
-    veut, et elle s'aimante au bord si on la lâche près d'un bord. Fenêtre de type
-    « utilitaire » : les scripts KWin qui retouchent les fenêtres normales
-    (centrage, coin d'écran) l'ignorent."""
+    veut, et elle s'aimante au bord si on la lâche près d'un bord.
+    Fenêtre NON gérée par KWin (comme un menu) : sinon, KWin la cache en même temps
+    que la fenêtre principale quand celle-ci est réduite. Les scripts KWin
+    (centrage, coin d'écran) l'ignorent aussi. Le glisser est donc fait à la main."""
 
     SNAP = 30          # px : lâchée à moins de ça d'un bord, elle s'y colle
 
     def __init__(self, mon):
-        super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+                         | Qt.X11BypassWindowManagerHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowTitle("Coup d'œil — languette")
         self.mon = mon

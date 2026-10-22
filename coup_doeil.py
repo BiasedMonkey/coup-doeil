@@ -1371,7 +1371,7 @@ def legend(*items):
 # ──────────────────────────────── languette ──────────────────────────────
 
 DOCK_GAP = 2          # px : déposée à moins de ça d'un bord (gauche/droit), la fenêtre s'y range
-DOCK_MARGIN = 6       # px d'espace entre la languette et le bord de l'écran
+DOCK_MARGIN = 2       # px d'espace entre la languette et le bord de l'écran
 
 
 class DockTab(QWidget):

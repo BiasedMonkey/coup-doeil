@@ -889,43 +889,34 @@ class HalftoneBar(QWidget):
 
 
 class PowerRows(QWidget):
-    """Consommation par composant, en classement : une ligne par composant,
-    du plus gourmand au moins gourmand, chacune avec sa barre de points
-    (longueur = part du total) et sa valeur. Se lit d'un coup d'œil : le plus
-    gros consommateur est toujours en haut, toutes les barres partent du même bord."""
-
-    ROW = 15          # hauteur d'une ligne (px)
-    VALUE_W = 74      # colonne « 12.3 W  38 % »
+    """Consommation par composant : une ligne par composant, toujours dans le même
+    ordre, chacune avec sa barre de points (longueur = part du total) et sa valeur.
+    Toutes les barres partent du même bord : on compare d'un coup d'œil."""
 
     def __init__(self, names, labels=None):
         super().__init__()
         self.labels = labels or {}            # clé → nom affiché (ex. « dGPU » → « RX 7700S »)
-        font = self.font()
-        font.setPixelSize(10)
-        fm = QFontMetrics(font)
-        self.name_w = 14 + max(fm.horizontalAdvance(self.labels.get(n, n)) for n in names)
-        # Toujours les mêmes lignes, dans un ordre qui ne change que pour un écart
-        # net : la hauteur ne bouge jamais, et deux valeurs proches ne s'échangent
-        # pas sans arrêt (sinon toute l'interface « saute »).
+        self.names = list(names)
+        self.rescale()
+        # Toujours les mêmes lignes, dans le même ordre : la hauteur ne bouge
+        # jamais et chaque composant reste à sa place.
         self.order = list(names)
         self.parts, self.total, self.state = [(n, None) for n in names], 0.0, None
-        self.setFixedHeight(len(names) * self.ROW)
 
-    def reorder(self, values):
-        """Tri à bulles avec hystérésis : on échange deux voisins seulement si
-        celui du bas dépasse celui du haut de 0,7 W et de 20 %."""
-        order, changed = self.order, True
-        while changed:
-            changed = False
-            for i in range(len(order) - 1):
-                a, b = values.get(order[i]) or 0.0, values.get(order[i + 1]) or 0.0
-                if b > a + max(0.7, 0.2 * a):
-                    order[i], order[i + 1] = order[i + 1], order[i]
-                    changed = True
+    def rescale(self):
+        """Dimensions selon la taille du texte (option)."""
+        self.px = max(7, round(10 * FONT_SCALE))
+        self.ROW = round(15 * FONT_SCALE)
+        font = self.font()
+        font.setPixelSize(self.px)
+        fm = QFontMetrics(font)
+        self.name_w = 14 + max(fm.horizontalAdvance(self.labels.get(n, n)) for n in self.names)
+        self.VALUE_W = fm.horizontalAdvance("88.8 W") + fm.horizontalAdvance("100 %") + 16
+        self.setFixedHeight(len(self.names) * self.ROW)
+        self.update()
 
     def set(self, parts, total):
         values = dict(parts)
-        self.reorder(values)
         parts = [(n, values.get(n)) for n in self.order]
         state = (tuple((n, None if w is None else round(w, 1)) for n, w in parts), round(total, 1))
         if state != self.state:
@@ -937,7 +928,7 @@ class PowerRows(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         w = self.width()
         font = p.font()
-        font.setPixelSize(10)
+        font.setPixelSize(self.px)
         p.setFont(font)
         bar_x0, bar_x1 = self.name_w + 4, w - self.VALUE_W - 6
         cols = max(1, int((bar_x1 - bar_x0) / (PITCH * 1.35)))
@@ -955,7 +946,7 @@ class PowerRows(QWidget):
             p.setBrush(color)
             p.drawEllipse(QPointF(4, y), 3, 3)
             p.setPen(QColor(TEXT))
-            p.drawText(QRectF(11, y - 7, self.name_w - 11, 14), Qt.AlignVCenter | Qt.AlignLeft,
+            p.drawText(QRectF(11, y - self.ROW / 2, self.name_w - 11, self.ROW), Qt.AlignVCenter | Qt.AlignLeft,
                        self.labels.get(name, name))
             # barre de points : pleine jusqu'à la part du total, le dernier point partiel
             lit = frac * cols
@@ -979,11 +970,13 @@ class PowerRows(QWidget):
             p.drawPoints(dim)
             # valeur et part du total
             p.setPen(QColor(TEXT if known else MUTED))
-            p.drawText(QRectF(w - self.VALUE_W, y - 7, 40, 14), Qt.AlignVCenter | Qt.AlignRight,
+            vw = self.VALUE_W - 6 - p.fontMetrics().horizontalAdvance("100 %")
+            p.drawText(QRectF(w - self.VALUE_W, y - self.ROW / 2, vw, self.ROW), Qt.AlignVCenter | Qt.AlignRight,
                        f"{watts:.1f} W" if known else "—")
             if known:
                 p.setPen(QColor(MUTED))
-                p.drawText(QRectF(w - 32, y - 7, 32, 14), Qt.AlignVCenter | Qt.AlignRight, f"{frac * 100:.0f} %")
+                p.drawText(QRectF(w - self.VALUE_W, y - self.ROW / 2, self.VALUE_W, self.ROW),
+                           Qt.AlignVCenter | Qt.AlignRight, f"{frac * 100:.0f} %")
 
 
 class DotBar(QWidget):
@@ -1043,7 +1036,7 @@ class Threads(QWidget):
         dx = PITCH * 0.85
         rmax = 0.5 * min(dx * 1.25, dy)
         font = p.font()
-        font.setPointSizeF(6.5)
+        font.setPointSizeF(6.5 * FONT_SCALE)
         p.setFont(font)
         for i, (load, f) in enumerate(zip(self.loads, self.freqs)):
             cx = (i + 0.5) * slot
@@ -1075,15 +1068,84 @@ def duration(s):
     return f"{h} h {m:02d}" if h else f"{m} min"
 
 
-def label(text="", color=MUTED, px=11, bold=False, spacing=0):
-    l = QLabel(text)
+FONT_SCALE = 1.0      # taille du texte (option), 1 = normale
+_LABELS = []          # textes créés par label(), pour les remettre à l'échelle
+
+
+def style_label(l):
+    color, px, bold, spacing = l.base_style
+    px = max(7, round(px * FONT_SCALE))
     l.setStyleSheet(f"color:{color}; font-size:{px}px; font-weight:{700 if bold else 400};"
                     f" letter-spacing:{spacing}px;")
     # Une ligne de texte garde toujours la même hauteur, même vide, et un texte
     # qui s'allonge ne peut pas élargir la fenêtre d'un coup : pas de sauts.
     l.setFixedHeight(round(px * 1.45) + 2)
-    l.setMinimumWidth(1)
+    if l.reserve:
+        # Largeur réservée pour la valeur la plus longue (ex. « 100 °C ») : jamais
+        # coupée, et fixe tant que la taille du texte ne change pas.
+        f = QFont(l.font())
+        f.setPixelSize(px)
+        f.setBold(bold)
+        f.setLetterSpacing(QFont.AbsoluteSpacing, spacing)
+        l.setMinimumWidth(QFontMetrics(f).horizontalAdvance(l.reserve) + 2)
+    else:
+        l.setMinimumWidth(1)
+
+
+def label(text="", color=MUTED, px=11, bold=False, spacing=0, reserve=None, cls=None):
+    l = (cls or QLabel)(text)
+    l.base_style = (color, px, bold, spacing)
+    l.reserve = reserve
+    style_label(l)
+    _LABELS.append(l)
     return l
+
+
+class ElidedLabel(QLabel):
+    """Texte qui se raccourcit avec « … » quand la place manque, au lieu d'être coupé."""
+
+    def __init__(self, text=""):
+        super().__init__()
+        self.full = text
+        super().setText(text)
+
+    def setText(self, text):
+        self.full = text
+        self.elide()
+
+    def text(self):
+        return self.full
+
+    def sizeHint(self):                     # la place souhaitée reste celle du texte entier
+        h = super().sizeHint()
+        return QSize(self.fontMetrics().horizontalAdvance(self.full) + 4, h.height())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.elide()
+
+    def changeEvent(self, e):               # nouvelle police (taille du texte)
+        super().changeEvent(e)
+        self.elide()
+
+    def elide(self):
+        shown = self.fontMetrics().elidedText(self.full, Qt.ElideRight, max(0, self.width() - 2))
+        if shown != super().text():
+            super().setText(shown)
+
+
+def set_font_scale(scale):
+    """Change la taille de tous les textes ; ceux qui ont été détruits sont oubliés."""
+    global FONT_SCALE
+    FONT_SCALE = scale
+    alive = []
+    for l in _LABELS:
+        try:
+            style_label(l)
+            alive.append(l)
+        except RuntimeError:          # widget Qt déjà détruit (ex. panneau d'options fermé)
+            pass
+    _LABELS[:] = alive
 
 
 class Grip(QLabel):
@@ -1129,17 +1191,32 @@ class Card(QWidget):
         head = QHBoxLayout()
         head.setSpacing(6)
         head.addWidget(Grip(self))
-        head.addWidget(label(title, MUTED, 11, True, 1))
-        self.subtitle = label(subtitle, TEXT, 11)
+        head.addWidget(label(title, MUTED, 11, True, 1, reserve=title))
+        self.subtitle = label(subtitle, TEXT, 11, cls=ElidedLabel)
         head.addWidget(self.subtitle)
         head.addStretch()
-        self.watts = label("", "#facc15", 11, True)     # ⚡ consommation du composant
+        self.temp = label("", MUTED, 11, True, reserve="100 °C")   # colorée selon sa valeur
+        self.temp_state = None
+        self.temp.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        head.addWidget(self.temp)
+        self.watts = label("", "#facc15", 11, True, reserve="⚡ 88.8 W")   # consommation
+        self.watts.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         head.addWidget(self.watts)
-        self.big = label("—", TEXT, big_px, True)
-        self.big.setMinimumWidth(70)
+        self.big = label("—", TEXT, big_px, True, reserve="100 %")
         self.big.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         head.addWidget(self.big)
         self.body.addLayout(head)
+
+    def set_temp(self, t):
+        if t is None:
+            self.temp.setText("")
+            return
+        self.temp.setText(f"{t:.0f} °C")
+        color = heat_color(temp_norm(t)).name()
+        if color != self.temp_state:                       # restyler seulement si la teinte change
+            self.temp_state = color
+            self.temp.base_style = (color,) + self.temp.base_style[1:]
+            style_label(self.temp)
 
     def set_watts(self, w, suffix=""):
         self.watts.setText("" if w is None else f"⚡ {w:.1f} W{suffix}")
@@ -1306,6 +1383,10 @@ class OptionsPanel(QWidget):
         grid.addWidget(QLabel("Rafraîchissement"), 0, 0)
         grid.addWidget(choix([("0,5 s", 500), ("1 s", 1000), ("2 s", 2000), ("5 s", 5000)],
                              mon.refresh_ms, mon.set_refresh), 0, 1)
+        grid.addWidget(QLabel("Taille du texte"), 3, 0)
+        grid.addWidget(choix([("80 %", 80), ("90 %", 90), ("100 %", 100), ("115 %", 115),
+                              ("130 %", 130), ("150 %", 150)],
+                             round(FONT_SCALE * 100), mon.set_font_size), 3, 1)
         grid.addWidget(QLabel("Lissage des courbes"), 1, 0)
         grid.addWidget(choix([("Aucun", 0), ("Léger", 1), ("Moyen", 2), ("Fort", 4)],
                              mon.smooth_passes, mon.set_smoothing), 1, 1)
@@ -1387,6 +1468,7 @@ class Monitor(QWidget):
         self.graphs = []
         self.tick = 0
         self.last_sample = time.monotonic()
+        set_font_scale(self.settings.value("font_scale", 100, type=int) / 100)
         self.refresh_ms = self.settings.value("refresh_ms", REFRESH_MS, type=int)
         self.smooth_scroll = self.settings.value("smooth_scroll", True, type=bool)
         self.smooth_passes = self.settings.value("smooth_passes", SMOOTH_PASSES, type=int)
@@ -1727,6 +1809,15 @@ class Monitor(QWidget):
         for l, text in self.hist_labels:
             l.setText(f"{text} — {self.history_text()}")
 
+    def set_font_size(self, pct):
+        set_font_scale(pct / 100)
+        self.settings.setValue("font_scale", pct)
+        for w in self.findChildren(PowerRows):
+            w.rescale()
+        for w in self.findChildren(Threads):
+            w.update()
+        self.layout().activate()
+
     def set_bg_opacity(self, pct):
         set_background_opacity(pct)
         self.settings.setValue("bg_opacity", pct)
@@ -1887,14 +1978,15 @@ class Monitor(QWidget):
         pw = self.powers()
         c.set_watts(pw["cpu"], "" if pw["cpu_is_cores"] else " puce")
         chip = f"   puce {pw['package']:.1f} W" if pw["cpu_is_cores"] and pw["package"] else ""
-        c.stats.setText(f"{cpu['freq_avg']:.2f} GHz moy · {cpu['freq']:.2f} max"
-                        f"   {fmt(cpu['temp'], ' °C')}{chip}")
+        c.set_temp(cpu["temp"])
+        c.stats.setText(f"{cpu['freq_avg']:.2f} GHz moy · {cpu['freq']:.2f} max{chip}")
         c.bar.set_levels([v / 100 for v in cpu["cores"]])
 
         for gpu, c, g in zip(self.gpus, self.c_gpus, d["gpus"]):
             if g["asleep"]:
                 c.big.setText("veille")
                 c.set_watts(0.0)
+                c.set_temp(None)
                 c.stats.setText("en veille (économie d'énergie)")
                 c.mem_label.setText("VRAM  —")
                 c.mem_pct.setText("")
@@ -1905,13 +1997,14 @@ class Monitor(QWidget):
                 c.set_watts(pw["igpu"])                      # partie graphique seule
             else:                                             # sans métriques : PPT = toute la puce
                 c.set_watts(g["power"], " puce" if gpu.integrated else "")
-            c.stats.setText(f"{fmt(g['freq'], ' GHz', 2)}   {fmt(g['temp'], ' °C')}")
+            c.set_temp(g["temp"])
+            c.stats.setText(f"Fréquence  {fmt(g['freq'], ' GHz', 2)}")
             self.fill_gpu_mem(gpu, c, g)
 
         c, r = self.c_ram, d["ram"]
         c.big.setText(fmt(r["load"], " %"))
-        c.stats.setText(f"{gib(r['used']):.1f} / {gib(r['total']):.1f} Go"
-                        f"   cache {gib(r['cache']):.1f} Go   {fmt(r['temp'], ' °C')}")
+        c.set_temp(r["temp"])
+        c.stats.setText(f"{gib(r['used']):.1f} / {gib(r['total']):.1f} Go   cache {gib(r['cache']):.1f} Go")
         c.mem_label.setText("Mémoire  ● utilisée  ○ cache")
         c.mem_pct.setText(f"{gib(r['available']):.1f} Go dispo")
         c.mem.set(r["used"] / r["total"], r["cache"] / r["total"])
@@ -1965,9 +2058,11 @@ class Monitor(QWidget):
         }
 
     def part_names(self):
-        names = ["CPU"] + (["iGPU", "SoC", "Puce"] if self.apu else [])
+        names = ["CPU"] + (["iGPU"] if self.apu else [])
         if any(not g.integrated for g in self.gpus):
             names.append("dGPU")
+        if self.apu:
+            names += ["SoC", "Puce"]
         if self.sys.bat:
             names.append("Reste")
         return names
@@ -2033,6 +2128,7 @@ class Monitor(QWidget):
         s.set("power", fmt(pw["cpu"], " W", 1))
         s.set("package", fmt(pw["package"], " W", 1))
         s.set("soc", fmt(pw["soc"], " W", 1))
+        c.set_temp(cpu["temp"])
         s.set("temp", fmt(cpu["temp"], " °C", 1))
         s.set("cores", f"{self.cpu.cores} / {self.cpu.threads}")
         s.set("boost", f"{self.cpu.max_freq:.2f} GHz")
@@ -2065,10 +2161,12 @@ class Monitor(QWidget):
             if g["asleep"]:
                 c.big.setText("veille")
                 c.set_watts(0.0)
+                c.set_temp(None)
                 for k in s.values:
                     s.set(k, "—")
                 continue
             c.big.setText(fmt(g["load"], " %"))
+            c.set_temp(g["temp"])
             s.set("freq", fmt(g["freq"], " GHz", 2))
             s.set("temp" if gpu.integrated else "edge", fmt(g["temps"].get("edge"), " °C"))
             s.set("volt", fmt(g["volt"], " mV"))
@@ -2103,6 +2201,7 @@ class Monitor(QWidget):
         s.set("free", size(r["free"]))
         s.set("available", size(r["available"]))
         s.set("swap", f"{size(r['swap'])} / {size(r['swap_total'])}")
+        c.set_temp(r["temp"])
         s.set("temp", " · ".join(f"{t:.0f} °C" for t in r["temps"]) or "—")
         used_c = heat_color(r["load"])
         c.legend.setText(legend((used_c, f"utilisée {gib(r['used']):.1f}"),

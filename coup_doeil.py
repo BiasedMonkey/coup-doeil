@@ -1652,18 +1652,20 @@ class Monitor(QWidget):
             if card is not None and name in getattr(card, "sections", {}):
                 card.set_section_folded(name, True)
 
-        pos = self.settings.value("pos")
-        if pos is not None:
+        # Au lancement : toujours dépliée (jamais en languette), en vue compacte,
+        # à sa dernière place — celle d'avant le rangement si elle était rangée.
+        pos = self.settings.value("predock_pos") or self.settings.value("pos")
+        for key in ("dock_edge", "dock_y", "predock_pos"):
+            self.settings.remove(key)
+        self.settings.setValue("detailed", False)
+        if isinstance(pos, QPoint):
+            self.settings.setValue("pos", pos)
             self.move(pos)
         else:
             geo = QApplication.primaryScreen().availableGeometry()
             self.move(geo.right() - 300 - 16, geo.top() + 16)
         self.pin.setChecked(self.settings.value("on_top", True, type=bool))
-        detailed = self.settings.value("detailed", False, type=bool)
-        if detailed:
-            self.expand.setChecked(True)     # applique aussi la taille de la vue
-        else:
-            self.apply_view_size()
+        self.apply_view_size()
         self.wanted = None                   # géométrie voulue, réaffirmée après l'ouverture
 
     def showEvent(self, e):
@@ -1677,10 +1679,6 @@ class Monitor(QWidget):
             QTimer.singleShot(250, self.reassert_geometry)
 
     def reassert_geometry(self):
-        edge = self.settings.value("dock_edge")
-        if edge in ("left", "right"):
-            self.dock(edge, self.settings.value("dock_y", self.y(), type=int))
-            return
         pos, _ = self.wanted
         self.apply_view_size()       # taille enregistrée ; le minimum est juste maintenant
         if self.pos() != pos:        # (modules repliés pris en compte après l'affichage)

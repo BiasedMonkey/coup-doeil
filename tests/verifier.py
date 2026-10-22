@@ -93,7 +93,11 @@ w.close()
 w = m.Monitor()
 w.show()
 QTest.qWait(1200)
-verifie("relance en grande vue : 1300×900", w.size().toTuple() == (1300, 900), w.size().toTuple())
+verifie("relance : toujours en vue compacte, à sa taille", not w.detailed and w.size().toTuple() == (430, 1000),
+        w.size().toTuple())
+w.expand.setChecked(True)
+QTest.qWait(1200)
+verifie("puis grande vue : sa taille est retenue (1300×900)", w.size().toTuple() == (1300, 900), w.size().toTuple())
 
 print("Stabilité de l'interface (aucun module ne change de taille)")
 random.seed(4)
@@ -253,8 +257,8 @@ w.close()
 w = m.Monitor()
 w.show()
 QTest.qWait(800)
-verifie("rangée à droite : retenu après relance", w.docked == "right" and w.x() + w.width() == 2048 - m.DOCK_MARGIN)
-w.undock()
+verifie("relance : jamais en languette, dépliée à sa dernière place", w.docked is None and not w.detailed
+        and w.x() + w.width() - 1 <= 2048 and w.width() > 100, f"{w.size().toTuple()} en {w.pos().toTuple()}")
 
 print("Bouton ⇤ « Ranger au bord »")
 w.close()

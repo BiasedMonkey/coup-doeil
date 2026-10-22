@@ -1613,6 +1613,9 @@ class Monitor(QWidget):
         self.opts_btn = self._button("⚙", "Options")
         self.opts_btn.clicked.connect(self.show_options)
         top.addWidget(self.opts_btn)
+        self.dock_btn = self._button("⇤", "Ranger au bord de l'écran")
+        self.dock_btn.clicked.connect(self.dock_nearest)
+        top.addWidget(self.dock_btn)
         top.addWidget(self.expand)
         self.pin = self._button("📌", "Toujours au-dessus")
         self.pin.setCheckable(True)
@@ -2496,9 +2499,20 @@ class Monitor(QWidget):
         elif self.x() + self.width() - 1 >= geo.right() - DOCK_GAP:
             self.dock("right")
 
-    def dock(self, edge, y=None):
+    def dock_nearest(self):
+        """Bouton ⇤ : range la fenêtre au bord le plus proche, à la même hauteur ;
+        un clic sur la languette la ramènera exactement à sa place."""
+        geo = self.screen_geo()
+        edge = "left" if self.frameGeometry().center().x() < geo.center().x() else "right"
+        self.dock(edge, restore=self.pos())
+
+    def dock(self, edge, y=None, restore=None):
         self.docked = edge
         self.settings.setValue("dock_edge", edge)
+        if restore is not None:
+            self.settings.setValue("predock_pos", restore)   # place d'avant (bouton ⇤)
+        else:
+            self.settings.remove("predock_pos")
         self.settle_until = time.monotonic() + 1.0
         for w in (self.topbar, self.compact, self.detail):
             w.hide()
@@ -2535,8 +2549,15 @@ class Monitor(QWidget):
             QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
         self.apply_view_size()
         geo = self.screen_geo()
-        x = geo.left() + 8 if edge == "left" else geo.right() - self.width() - 7
-        y = max(geo.top(), min(self.y(), geo.bottom() - self.height() + 1))
+        back = self.settings.value("predock_pos")
+        self.settings.remove("predock_pos")
+        if isinstance(back, QPoint):          # rangée par le bouton ⇤ : retour à sa place
+            x, y = back.x(), back.y()
+        else:                                 # rangée en la déposant au bord : à 8 px du bord
+            x = geo.left() + 8 if edge == "left" else geo.right() - self.width() - 7
+            y = self.y()
+        x = max(geo.left(), min(x, geo.right() - self.width() + 1))
+        y = max(geo.top(), min(y, geo.bottom() - self.height() + 1))
         self.move(x, y)
         self.settings.setValue("pos", QPoint(x, y))
 

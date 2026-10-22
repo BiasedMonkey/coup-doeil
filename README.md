@@ -25,7 +25,7 @@ en douceur.
 - **Modules déplaçables** : attrape la poignée ⠿ à gauche d'un titre (dans la grande vue, d'une colonne à l'autre).
 - **Modules repliables** (vue compacte) : le bouton ▾ réduit un module à sa ligne de titre (température, watts, %) et la fenêtre rétrécit d'autant ; ▸ le redéplie.
 - **Consommation repliable** : le ▾ devant « Consommation » (module Batterie, carte Système) masque la liste des composants et ne garde que le total.
-- **Rangée au bord de l'écran** : dépose la fenêtre contre le bord gauche ou droit, elle se range en une languette (un point coloré par composant pour garder un œil sur la charge). Un clic la redéploie ; on peut la glisser le long du bord.
+- **Rangée au bord de l'écran** : dépose la fenêtre contre le bord gauche ou droit, elle se range en une languette (un point coloré par composant pour garder un œil sur la charge). Le bouton **⇤** fait de même sans déplacer la fenêtre (bord le plus proche) ; un clic sur la languette la ramène alors exactement à sa place. On peut glisser la languette le long du bord.
 - **Coin supérieur gauche** (KDE Plasma) : y amener la souris affiche ou masque Coup d'œil — `./install.sh --coin` installe le petit script KWin correspondant (aussi disponible en raccourci clavier « Afficher / masquer Coup d'œil »).
 - **Fenêtre redimensionnable** par ses bords ; les courbes prennent l'espace en plus. Chaque vue retient sa taille, sa position et l'ordre de ses modules.
 - **Consommation par composant** : classement trié, avec le nom du matériel (ex. Ryzen 7 7840HS, Radeon 780M, RX 7700S, SoC, reste de la puce, et sur batterie « écran, RAM… »).

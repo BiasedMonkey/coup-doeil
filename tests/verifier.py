@@ -328,6 +328,43 @@ verifie("animations coupées : languette immédiate", w.docked == "float")
 w.undock()
 verifie("animations coupées : fenêtre immédiate", w.docked is None and w.compact.isVisible())
 
+print("Languette toujours affichée (option)")
+w.set_animations(True)
+w.move(400, 150)
+QTest.qWait(600)
+w.set_tab_always(True)
+QTest.qWait(600)
+t = w.ptab
+verifie("languette affichée en plus de la fenêtre ouverte", t.isVisible() and not w.isMinimized())
+
+
+def clic_languette():
+    QTest.mousePress(t.tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
+    QTest.mouseRelease(t.tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
+    QTest.qWait(600)
+
+
+t.move(2, 560)
+QTest.qWait(700)
+clic_languette()
+verifie("clic : la fenêtre se referme, la languette reste", w.isMinimized() and t.isVisible())
+clic_languette()
+centre = t.y() + t.height() // 2
+verifie("clic : la fenêtre s'ouvre à côté, centrée sur la languette (ou calée dans l'écran)",
+        not w.isMinimized() and w.x() > t.x()
+        and (abs(w.y() + w.height() // 2 - centre) <= 1 or w.y() == 0 or w.y() + w.height() == 1280),
+        f"fenêtre en {w.pos().toTuple()}")
+w.dock_btn.click()
+QTest.qWait(600)
+verifie("⊟ : referme dans la languette", w.isMinimized() and t.isVisible())
+clic_languette()
+t.move(2030, 500)
+QTest.qWait(700)
+verifie("lâchée près du bord droit : s'y colle", t.x() + t.width() == 2048 - m.DOCK_MARGIN)
+w.set_tab_always(False)
+QTest.qWait(200)
+verifie("option désactivée : languette retirée, fenêtre visible", w.ptab is None and not w.isMinimized())
+
 print()
 print("Tout est bon." if not echecs else f"{len(echecs)} échec(s) : {', '.join(echecs)}")
 sys.exit(1 if echecs else 0)

@@ -3,7 +3,10 @@
 
 function fenetres() {
     return workspace.windowList().filter(function (w) {
-        return w.desktopFileName === "coup-doeil" || w.resourceName === "coup_doeil.py";
+        // fenêtre principale seulement : la languette permanente (fenêtre
+        // « utilitaire », donc pas normale) reste toujours affichée
+        return w.normalWindow &&
+            (w.desktopFileName === "coup-doeil" || w.resourceName === "coup_doeil.py");
     });
 }
 

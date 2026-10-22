@@ -1379,9 +1379,10 @@ class DockTab(QWidget):
     flèche pour la redéployer (clic) et un point par composant, coloré selon sa
     charge — on garde un coup d'œil même rangé. Glisser la déplace le long du bord."""
 
-    def __init__(self, mon):
+    def __init__(self, mon, host=None):
         super().__init__()
         self.mon, self.edge, self.levels, self.press = mon, "left", [], None
+        self.host = host or mon            # la fenêtre qu'on déplace en glissant la languette
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Clic : déployer Coup d'œil — glisser : déplacer le long du bord")
         self.resize_for(4)
@@ -1423,12 +1424,56 @@ class DockTab(QWidget):
     def mouseMoveEvent(self, e):
         if self.press is not None and (e.globalPosition().toPoint() - self.press).manhattanLength() > 6:
             self.press = None
-            self.mon.windowHandle().startSystemMove()     # le long du bord ; recollée ensuite
+            self.host.windowHandle().startSystemMove()    # recollée au bord ensuite
 
     def mouseReleaseEvent(self, e):
         if self.press is not None:
             self.press = None
-            self.mon.undock()
+            self.mon.tab_clicked(self.host)
+
+
+class TabWindow(QWidget):
+    """Languette toujours affichée (option) : une petite fenêtre à part, au-dessus
+    des autres. Un clic ouvre ou referme la fenêtre principale ; on la pose où l'on
+    veut, et elle s'aimante au bord si on la lâche près d'un bord. Fenêtre de type
+    « utilitaire » : les scripts KWin qui retouchent les fenêtres normales
+    (centrage, coin d'écran) l'ignorent."""
+
+    SNAP = 30          # px : lâchée à moins de ça d'un bord, elle s'y colle
+
+    def __init__(self, mon):
+        super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setWindowTitle("Coup d'œil — languette")
+        self.mon = mon
+        self.tab = DockTab(mon, host=self)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSizeConstraint(QLayout.SetFixedSize)
+        lay.addWidget(self.tab)
+        self.snap_timer = QTimer(self, singleShot=True, interval=400, timeout=self.snap)
+
+    def moveEvent(self, e):
+        if self.isVisible():
+            self.snap_timer.start()
+        super().moveEvent(e)
+
+    def snap(self):
+        geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        x, w = self.x(), self.width()
+        if x <= geo.left() + self.SNAP:
+            x, edge = geo.left() + DOCK_MARGIN, "left"
+        elif x + w - 1 >= geo.right() - self.SNAP:
+            x, edge = geo.right() - w + 1 - DOCK_MARGIN, "right"
+        else:
+            edge = "float"
+        y = max(geo.top(), min(self.y(), geo.bottom() - self.height() + 1))
+        if (x, y) != (self.x(), self.y()):
+            self.move(x, y)
+        if edge != self.tab.edge:
+            self.tab.edge = edge
+            self.tab.update()
+        self.mon.settings.setValue("ptab_pos", QPoint(x, y))
 
 
 class Morph(QWidget):
@@ -1581,6 +1626,11 @@ class OptionsPanel(QWidget):
         anim.setChecked(mon.animations)
         anim.toggled.connect(mon.set_animations)
         lay.addWidget(anim)
+        always = QCheckBox("Languette toujours affichée")
+        always.setToolTip("Un clic sur la languette ouvre ou referme la fenêtre")
+        always.setChecked(mon.ptab is not None)
+        always.toggled.connect(mon.set_tab_always)
+        lay.addWidget(always)
         auto = QCheckBox("Lancer à l'ouverture de session")
         auto.setChecked(AUTOSTART.exists())
         auto.toggled.connect(set_autostart)
@@ -1700,6 +1750,9 @@ class Monitor(QWidget):
         self.dock_timer = QTimer(self, singleShot=True, interval=450, timeout=self.check_dock)
         self.morph = Morph(self)
         self.animations = self.settings.value("animations", True, type=bool)
+        self.ptab = None                                  # languette toujours affichée
+        if self.settings.value("tab_always", False, type=bool):
+            QTimer.singleShot(400, lambda: self.set_tab_always(True))
 
         self.timer = QTimer(self, interval=self.refresh_ms, timeout=self.refresh)
         self.timer.start()
@@ -2198,6 +2251,8 @@ class Monitor(QWidget):
 
     def closeEvent(self, e):
         self.save_size_now()
+        if self.ptab:
+            self.ptab.close()
         super().closeEvent(e)
 
     # --- mise à jour ----------------------------------------------------
@@ -2233,6 +2288,8 @@ class Monitor(QWidget):
             self.hist["ram"].append(r["load"])
             self.hist["swap"].append(r["swap"] / r["swap_total"] * 100 if r["swap_total"] else 0)
 
+        if self.ptab:
+            self.update_dock_tab()
         if self.isMinimized():
             return
         if self.docked:
@@ -2562,6 +2619,16 @@ class Monitor(QWidget):
             return                       # démarrage, repositionnement automatique… : jamais
         self.user_moving = False
         geo = self.screen_geo()
+        near = self.x() <= geo.left() + DOCK_GAP or self.x() + self.width() - 1 >= geo.right() - DOCK_GAP
+        if near and self.ptab:
+            # languette permanente : elle vient se poser contre ce bord, à mi-hauteur
+            left = self.x() <= geo.left() + DOCK_GAP
+            t = self.ptab
+            t.move(geo.left() + DOCK_MARGIN if left else geo.right() - t.width() + 1 - DOCK_MARGIN,
+                   self.y() + self.height() // 2 - t.height() // 2)
+            t.snap()
+            self.hide_to_ptab()
+            return
         if self.x() <= geo.left() + DOCK_GAP:
             self.dock_animated("left")
         elif self.x() + self.width() - 1 >= geo.right() - DOCK_GAP:
@@ -2573,8 +2640,91 @@ class Monitor(QWidget):
         """Bouton ⊟ : réduit la fenêtre en languette sur place, à gauche et à
         mi-hauteur de la fenêtre. La languette peut ensuite être posée n'importe où ;
         la fenêtre se redéploiera centrée verticalement sur elle."""
+        if self.ptab:
+            self.hide_to_ptab()
+            return
         mid = self.y() + self.height() // 2
         self.dock_animated("float", anchor=QPoint(self.x() + self.FLOAT_INSET.x(), mid - self.dock_tab.height() // 2))
+
+    def tab_clicked(self, host):
+        if host is self:                      # languette intégrée : on redéploie
+            self.undock()
+        elif self.isMinimized() or not self.isVisible():
+            self.show_from_ptab()
+        else:
+            self.hide_to_ptab()
+
+    def set_tab_always(self, on):
+        self.settings.setValue("tab_always", on)
+        if on and self.ptab is None:
+            if self.docked:                    # quitter le mode languette intégrée
+                anim, self.animations = self.animations, False
+                self.undock()
+                self.animations = anim
+            self.ptab = TabWindow(self)
+            self.update_dock_tab()
+            pos = self.settings.value("ptab_pos")
+            if not isinstance(pos, QPoint):    # par défaut : bord gauche, à mi-hauteur de la fenêtre
+                geo = self.screen_geo()
+                pos = QPoint(geo.left() + DOCK_MARGIN, self.y() + self.height() // 2 - self.ptab.height() // 2)
+            self.ptab.move(pos)
+            self.ptab.show()
+            self.ptab.snap()
+        elif not on and self.ptab is not None:
+            if self.isMinimized():
+                self.showNormal()
+            self.ptab.close()
+            self.ptab = None
+
+    def hide_to_ptab(self):
+        """La fenêtre se resserre vers la languette permanente, puis se réduit."""
+        def finish():
+            self.showMinimized()
+            self.topbar.show()                 # prête pour la prochaine ouverture
+            (self.detail if self.detailed else self.compact).show()
+        if not self.animations or not self.isVisible() or self.morph.isVisible():
+            self.showMinimized()
+            return
+        target = self.ptab.frameGeometry()
+        picture = self.grab()
+        for w in (self.topbar, self.compact, self.detail):
+            w.hide()
+        self.morph.run(picture, QRect(self.rect()), target.translated(-self.pos()), (1.0, 0.15),
+                       QEasingCurve.InCubic, finish)
+
+    def show_from_ptab(self):
+        """La fenêtre s'ouvre à côté de la languette, centrée verticalement sur elle."""
+        tab = self.ptab.frameGeometry()
+        self.apply_view_size()
+        geo = self.screen_geo()
+        y = tab.center().y() - self.height() // 2
+        if tab.center().x() < geo.center().x():
+            x = tab.right() + 6                # languette à gauche : fenêtre à sa droite
+        else:
+            x = tab.left() - self.width() - 6
+        x = max(geo.left(), min(x, geo.right() - self.width() + 1))
+        y = max(geo.top(), min(y, geo.bottom() - self.height() + 1))
+        self.move(x, y)
+        self.settings.setValue("pos", QPoint(x, y))
+        if self.animations:
+            self.refresh(sample=False)
+            self.layout().activate()
+            picture = self.grab()
+            for w in (self.topbar, self.detail if self.detailed else self.compact):
+                w.hide()
+
+            def reveal():
+                self.topbar.show()
+                (self.detail if self.detailed else self.compact).show()
+                self.update()
+            self.morph.run(picture, tab.translated(-QPoint(x, y)), QRect(self.rect()), (0.35, 1.0),
+                           QEasingCurve.OutCubic, reveal)
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        if self.animations:
+            self.morph.repaint()
+            self.repaint()
 
     def tab_rect(self, edge, anchor=None):
         """Où sera la languette (coordonnées de l'écran)."""
@@ -2690,6 +2840,8 @@ class Monitor(QWidget):
         levels += [None if g["asleep"] else g["load"] for g in d["gpus"]]
         levels.append(d["ram"]["load"])
         self.dock_tab.set_levels(levels)
+        if self.ptab:
+            self.ptab.tab.set_levels(levels)
 
 
 def main():

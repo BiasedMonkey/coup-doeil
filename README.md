@@ -25,6 +25,8 @@ en douceur.
 - **Modules déplaçables** : attrape la poignée ⠿ à gauche d'un titre (dans la grande vue, d'une colonne à l'autre).
 - **Modules repliables** (vue compacte) : le bouton ▾ réduit un module à sa ligne de titre (température, watts, %) et la fenêtre rétrécit d'autant ; ▸ le redéplie.
 - **Consommation repliable** : le ▾ devant « Consommation » (module Batterie, carte Système) masque la liste des composants et ne garde que le total.
+- **Rangée au bord de l'écran** : dépose la fenêtre contre le bord gauche ou droit, elle se range en une languette (un point coloré par composant pour garder un œil sur la charge). Un clic la redéploie ; on peut la glisser le long du bord.
+- **Coin supérieur gauche** (KDE Plasma) : y amener la souris affiche ou masque Coup d'œil — `./install.sh --coin` installe le petit script KWin correspondant (aussi disponible en raccourci clavier « Afficher / masquer Coup d'œil »).
 - **Fenêtre redimensionnable** par ses bords ; les courbes prennent l'espace en plus. Chaque vue retient sa taille, sa position et l'ordre de ses modules.
 - **Consommation par composant** : classement trié, avec le nom du matériel (ex. Ryzen 7 7840HS, Radeon 780M, RX 7700S, SoC, reste de la puce, et sur batterie « écran, RAM… »).
 
@@ -65,8 +67,8 @@ cd coup-doeil
 ```
 
 Le script copie l'appli dans `~/.local/share/coup-doeil/`, ajoute l'icône et le lanceur
-« Coup d'œil » au menu. Avec `./install.sh --favori`, il l'ajoute aussi aux favoris du
-menu KDE.
+« Coup d'œil » au menu. Options (combinables) : `--favori` l'ajoute aux favoris du menu
+KDE, `--coin` active l'affichage / masquage par le coin supérieur gauche de l'écran.
 
 Pour essayer sans installer : `python3 coup_doeil.py`.
 

@@ -1367,6 +1367,67 @@ def legend(*items):
     return "&nbsp;&nbsp;".join(f"<span style='color:{c.name()}'>●</span> {t}" for c, t in items)
 
 
+# ──────────────────────────────── languette ──────────────────────────────
+
+DOCK_GAP = 2          # px : déposée à moins de ça d'un bord (gauche/droit), la fenêtre s'y range
+
+
+class DockTab(QWidget):
+    """Languette affichée quand la fenêtre est rangée au bord de l'écran : une
+    flèche pour la redéployer (clic) et un point par composant, coloré selon sa
+    charge — on garde un coup d'œil même rangé. Glisser la déplace le long du bord."""
+
+    def __init__(self, mon):
+        super().__init__()
+        self.mon, self.edge, self.levels, self.press = mon, "left", [], None
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Clic : déployer Coup d'œil — glisser : déplacer le long du bord")
+        self.resize_for(4)
+
+    def resize_for(self, n):
+        self.setFixedSize(22, 30 + 14 * n)
+
+    def set_levels(self, levels):
+        """levels : charge de chaque composant en %, None s'il dort."""
+        if len(levels) != len(self.levels):
+            self.resize_for(len(levels))
+        if levels != self.levels:
+            self.levels = levels
+            self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h, r = self.width(), self.height(), 9
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0, 0, w, h), r, r)
+        flat = QPainterPath()                      # côté collé au bord : angles droits
+        flat.addRect(QRectF(0 if self.edge == "left" else w - r, 0, r, h))
+        p.fillPath(path.united(flat), QColor(18, 20, 26, 245))
+        p.setPen(QColor(MUTED))
+        f = p.font()
+        f.setPixelSize(12)
+        p.setFont(f)
+        p.drawText(QRectF(0, 4, w, 18), Qt.AlignCenter, "▸" if self.edge == "left" else "◂")
+        p.setPen(Qt.NoPen)
+        for i, lvl in enumerate(self.levels):
+            p.setBrush(DIM if lvl is None else heat_color(lvl))
+            p.drawEllipse(QPointF(w / 2, 30 + 14 * i), 4, 4)
+
+    def mousePressEvent(self, e):
+        self.press = e.globalPosition().toPoint()
+
+    def mouseMoveEvent(self, e):
+        if self.press is not None and (e.globalPosition().toPoint() - self.press).manhattanLength() > 6:
+            self.press = None
+            self.mon.windowHandle().startSystemMove()     # le long du bord ; recollée ensuite
+
+    def mouseReleaseEvent(self, e):
+        if self.press is not None:
+            self.press = None
+            self.mon.undock()
+
+
 # ──────────────────────────────── options ────────────────────────────────
 
 AUTOSTART = (Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
@@ -1540,7 +1601,9 @@ class Monitor(QWidget):
         root.setContentsMargins(10, 8, 10, 10)
         root.setSpacing(8)
 
-        top = QHBoxLayout()
+        self.topbar = QWidget()
+        top = QHBoxLayout(self.topbar)
+        top.setContentsMargins(0, 0, 0, 0)
         top.addWidget(label("● COUP D'ŒIL", MUTED, 10, True, 2))
         top.addStretch()
         self.expand = self._button("⤢", "Vue détaillée")
@@ -1557,13 +1620,18 @@ class Monitor(QWidget):
         close = self._button("✕", "Fermer")
         close.clicked.connect(self.close)
         top.addWidget(close)
-        root.addLayout(top)
+        root.addWidget(self.topbar)
 
         self.compact = self.build_compact()
         self.detail = self.build_detail()
         root.addWidget(self.compact)
         root.addWidget(self.detail)
         self.detail.hide()
+        self.docked = None                         # "left" / "right" quand rangée au bord
+        self.dock_tab = DockTab(self)
+        root.addWidget(self.dock_tab, 0, Qt.AlignCenter)
+        self.dock_tab.hide()
+        self.dock_timer = QTimer(self, singleShot=True, interval=450, timeout=self.check_dock)
 
         self.timer = QTimer(self, interval=self.refresh_ms, timeout=self.refresh)
         self.timer.start()
@@ -1605,10 +1673,13 @@ class Monitor(QWidget):
             QTimer.singleShot(250, self.reassert_geometry)
 
     def reassert_geometry(self):
-        pos, size = self.wanted
-        if self.size() != size:
-            self.resize(size)
-        if self.pos() != pos:
+        edge = self.settings.value("dock_edge")
+        if edge in ("left", "right"):
+            self.dock(edge, self.settings.value("dock_y", self.y(), type=int))
+            return
+        pos, _ = self.wanted
+        self.apply_view_size()       # taille enregistrée ; le minimum est juste maintenant
+        if self.pos() != pos:        # (modules repliés pris en compte après l'affichage)
             self.move(pos)
 
     def _button(self, text, tip):
@@ -2038,6 +2109,8 @@ class Monitor(QWidget):
 
     def apply_view_size(self):
         """Reprend la taille retenue pour la vue affichée (sinon sa taille naturelle)."""
+        for _ in range(3):                 # tailles minimales à jour (modules repliés…)
+            QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
         self.layout().activate()
         saved = self.settings.value(self.view_key())
         size = saved if isinstance(saved, QSize) else self.sizeHint()
@@ -2050,7 +2123,7 @@ class Monitor(QWidget):
         super().resizeEvent(e)
 
     def save_size_now(self):
-        if time.monotonic() >= self.settle_until and self.isVisible():
+        if time.monotonic() >= self.settle_until and self.isVisible() and not self.docked:
             self.settings.setValue(self.view_key(), self.size())
 
     def closeEvent(self, e):
@@ -2091,6 +2164,9 @@ class Monitor(QWidget):
             self.hist["swap"].append(r["swap"] / r["swap_total"] * 100 if r["swap_total"] else 0)
 
         if self.isMinimized():
+            return
+        if self.docked:
+            self.update_dock_tab()
             return
         if self.detailed:
             self.update_detail()
@@ -2377,7 +2453,8 @@ class Monitor(QWidget):
         if edges != Qt.Edge(0):
             self.windowHandle().startSystemResize(edges)   # le bord : on redimensionne
         else:
-            self.windowHandle().startSystemMove()          # ailleurs : on déplace
+            self.user_moving = True                          # seul un déplacement à la souris
+            self.windowHandle().startSystemMove()          # peut ranger la fenêtre au bord
 
     def mouseMoveEvent(self, e):
         shape = self.CURSORS.get(self.edges_at(e.position().toPoint()))
@@ -2391,9 +2468,85 @@ class Monitor(QWidget):
         super().leaveEvent(e)
 
     def moveEvent(self, e):
-        if time.monotonic() >= self.settle_until:
+        if not self.docked and time.monotonic() >= self.settle_until:
             self.settings.setValue("pos", self.pos())
+        if self.isVisible():
+            self.dock_timer.start()          # vérifié une fois le déplacement terminé
         super().moveEvent(e)
+
+    # --- ranger au bord de l'écran ----------------------------------------
+
+    def screen_geo(self):
+        return (self.screen() or QApplication.primaryScreen()).availableGeometry()
+
+    def check_dock(self):
+        """Après un déplacement à la souris : déposée contre le bord gauche ou droit
+        de l'écran → rangée. Si elle l'est déjà, on la recolle au bord (on peut
+        glisser la languette le long de celui-ci)."""
+        if self.docked:
+            self.stick_to_edge()
+            return
+        if not getattr(self, "user_moving", False):
+            return                       # démarrage, repositionnement automatique… : jamais
+        self.user_moving = False
+        geo = self.screen_geo()
+        if self.x() <= geo.left() + DOCK_GAP:
+            self.dock("left")
+        elif self.x() + self.width() - 1 >= geo.right() - DOCK_GAP:
+            self.dock("right")
+
+    def dock(self, edge, y=None):
+        self.docked = edge
+        self.settings.setValue("dock_edge", edge)
+        self.settle_until = time.monotonic() + 1.0
+        for w in (self.topbar, self.compact, self.detail):
+            w.hide()
+        self.layout().setContentsMargins(0, 0, 0, 0)
+        self.dock_tab.edge = edge
+        self.update_dock_tab()
+        self.dock_tab.show()
+        for _ in range(3):
+            QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
+        self.layout().activate()
+        self.resize(self.dock_tab.size())
+        self.stick_to_edge(self.y() if y is None else y)
+
+    def stick_to_edge(self, y=None):
+        geo = self.screen_geo()
+        x = geo.left() if self.docked == "left" else geo.right() - self.width() + 1
+        y = max(geo.top(), min(self.y() if y is None else y, geo.bottom() - self.height() + 1))
+        if (x, y) != (self.x(), self.y()):
+            self.move(x, y)
+        self.settings.setValue("dock_y", y)
+
+    def undock(self):
+        if not self.docked:
+            return
+        edge, self.docked = self.docked, None
+        self.settings.remove("dock_edge")
+        self.settle_until = time.monotonic() + 1.0
+        self.dock_tab.hide()
+        self.layout().setContentsMargins(10, 8, 10, 10)
+        self.topbar.show()
+        (self.detail if self.detailed else self.compact).show()
+        self.refresh(sample=False)
+        for _ in range(3):
+            QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
+        self.apply_view_size()
+        geo = self.screen_geo()
+        x = geo.left() + 8 if edge == "left" else geo.right() - self.width() - 7
+        y = max(geo.top(), min(self.y(), geo.bottom() - self.height() + 1))
+        self.move(x, y)
+        self.settings.setValue("pos", QPoint(x, y))
+
+    def update_dock_tab(self):
+        d = getattr(self, "data", None)
+        if not d:
+            return
+        levels = [d["cpu"]["load"]]
+        levels += [None if g["asleep"] else g["load"] for g in d["gpus"]]
+        levels.append(d["ram"]["load"])
+        self.dock_tab.set_levels(levels)
 
 
 def main():

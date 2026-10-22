@@ -1,0 +1,14 @@
+{
+    "KPlugin": {
+        "Id": "coup-doeil-coin",
+        "Name": "Coup d'œil — coin supérieur gauche",
+        "Description": "Amener la souris dans le coin supérieur gauche de l'écran affiche ou masque Coup d'œil.",
+        "Authors": [{ "Name": "BiasedMonkey" }],
+        "Version": "1.0",
+        "License": "MIT",
+        "EnabledByDefault": false
+    },
+    "X-Plasma-API": "javascript",
+    "X-Plasma-MainScript": "code/main.js",
+    "KPackageStructure": "KWin/Script"
+}

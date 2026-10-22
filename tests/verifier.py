@@ -12,8 +12,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="coup-doeil-test-")
+# écran virtuel de la taille d'un portable 16" (2048×1280 en pixels logiques)
+ecran = Path(os.environ["XDG_CONFIG_HOME"]) / "ecran.json"
+ecran.write_text('{"screens":[{"name":"ecran","x":0,"y":0,"width":2048,"height":1280,'
+                 '"logicalDpi":96,"logicalBaseDpi":96,"dpr":1}]}')
+os.environ["QT_QPA_PLATFORM"] = f"offscreen:configfile={ecran}"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import coup_doeil as m  # noqa: E402
@@ -166,6 +170,33 @@ verifie("réinitialiser remet l'ordre par défaut",
 m.set_autostart(True)
 verifie("lancement à l'ouverture de session : fichier créé", m.AUTOSTART.exists())
 m.set_autostart(False)
+
+print("Replier / déplier (vue compacte)")
+w.close()
+w = m.Monitor()
+w.show()
+w.expand.setChecked(False)
+QTest.qWait(1200)
+w.move(20, 10)
+carte = next(c for c in w.compact_cards.values() if c.isVisible() and c.elastic)
+h0, c0 = w.height(), carte.height()
+autres = {c.module_id: c.height() for c in w.compact_cards.values() if c is not carte}
+w.toggle_card(carte)
+QTest.qWait(100)
+verifie("replié : ne garde que sa ligne de titre", carte.height() < c0 / 2, f"{c0} → {carte.height()} px")
+verifie("la fenêtre rétrécit de la place libérée", abs((h0 - w.height()) - (c0 - carte.height())) <= 2,
+        f"{h0} → {w.height()}")
+verifie("les autres modules ne bougent pas",
+        {c.module_id: c.height() for c in w.compact_cards.values() if c is not carte} == autres)
+w.toggle_card(carte)
+QTest.qWait(100)
+verifie("déplié : module et fenêtre retrouvent leur taille",
+        abs(carte.height() - c0) <= 2 and abs(w.height() - h0) <= 2, f"{carte.height()} px, fenêtre {w.height()}")
+w.toggle_card(carte)
+QTest.qWait(700)
+w.close()
+w = m.Monitor()
+verifie("l'état replié est retenu après relance", w.compact_cards[carte.module_id].collapsed)
 
 print()
 print("Tout est bon." if not echecs else f"{len(echecs)} échec(s) : {', '.join(echecs)}")

@@ -23,6 +23,7 @@ en douceur.
 
 - **📌 Toujours au-dessus** des autres fenêtres.
 - **Modules déplaçables** : attrape la poignée ⠿ à gauche d'un titre (dans la grande vue, d'une colonne à l'autre).
+- **Modules repliables** (vue compacte) : le bouton ▾ réduit un module à sa ligne de titre (température, watts, %) et la fenêtre rétrécit d'autant ; ▸ le redéplie.
 - **Fenêtre redimensionnable** par ses bords ; les courbes prennent l'espace en plus. Chaque vue retient sa taille, sa position et l'ordre de ses modules.
 - **Consommation par composant** : classement trié, avec le nom du matériel (ex. Ryzen 7 7840HS, Radeon 780M, RX 7700S, SoC, reste de la puce, et sur batterie « écran, RAM… »).
 

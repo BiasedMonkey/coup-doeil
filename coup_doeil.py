@@ -19,7 +19,7 @@ from pathlib import Path
 if os.environ.get("XDG_SESSION_TYPE") == "wayland" and os.environ.get("DISPLAY"):
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
-from PySide6.QtCore import QPoint, QPointF, QRectF, QSettings, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QGridLayout, QHBoxLayout,
                                QLabel, QLayout, QPushButton, QSizePolicy, QSlider, QVBoxLayout,
@@ -1180,7 +1180,7 @@ class Grip(QLabel):
 class Card(QWidget):
     """Bloc arrondi : poignée, titre, nom du matériel, grosse valeur à droite."""
 
-    def __init__(self, module_id, title, subtitle="", big_px=17):
+    def __init__(self, module_id, title, subtitle="", big_px=17, collapsible=False):
         super().__init__()
         self.module_id = module_id
         self.dragging = False
@@ -1191,6 +1191,19 @@ class Card(QWidget):
         head = QHBoxLayout()
         head.setSpacing(6)
         head.addWidget(Grip(self))
+        self.collapsed = False
+        self.parts = []                  # tout sauf l'en-tête : ce qu'on masque en repliant
+        if collapsible:
+            self.chevron = QPushButton("▾")
+            self.chevron.setFixedSize(16, 20)
+            self.chevron.setCursor(Qt.PointingHandCursor)
+            self.chevron.setToolTip("Replier / déplier ce module")
+            self.chevron.setStyleSheet(
+                "QPushButton{color:rgba(230,232,238,0.55); font-size:12px; border:none;"
+                " border-radius:5px; background:transparent;}"
+                "QPushButton:hover{color:#5ac8fa; background:rgba(90,200,250,0.16);}")
+            self.chevron.clicked.connect(lambda: self.window().toggle_card(self))
+            head.addWidget(self.chevron)
         head.addWidget(label(title, MUTED, 11, True, 1, reserve=title))
         self.subtitle = label(subtitle, TEXT, 11, cls=ElidedLabel)
         head.addWidget(self.subtitle)
@@ -1221,7 +1234,16 @@ class Card(QWidget):
     def set_watts(self, w, suffix=""):
         self.watts.setText("" if w is None else f"⚡ {w:.1f} W{suffix}")
 
+    def set_collapsed(self, collapsed):
+        """Replié : seule la ligne de titre reste (nom, température, watts, %)."""
+        self.collapsed = collapsed
+        for w in self.parts:
+            w.setVisible(not collapsed)
+        if hasattr(self, "chevron"):
+            self.chevron.setText("▸" if collapsed else "▾")
+
     def add(self, w):
+        self.parts.append(w)
         if isinstance(w, DotGraph):
             # l'espace vertical en plus va aux graphes, au prorata de leur taille
             self.body.addWidget(w, w.base_height)
@@ -1238,6 +1260,7 @@ class Card(QWidget):
         b = label(right or "", TEXT, 10)
         row.addWidget(b)
         self.body.addLayout(row)
+        self.parts += [a, b]
         return a, b
 
     def paintEvent(self, _):
@@ -1479,6 +1502,10 @@ class Monitor(QWidget):
             self.hidden = set()
         self.hist_labels = []
         self.layouts = {}
+        try:
+            self.folded = set(json.loads(self.settings.value("collapsed", "[]") or "[]"))
+        except ValueError:
+            self.folded = set()
 
         root = QVBoxLayout(self)
         root.setSizeConstraint(QLayout.SetMinimumSize)  # taille libre, jamais sous le contenu
@@ -1517,6 +1544,8 @@ class Monitor(QWidget):
         if self.smooth_scroll:
             self.anim.start()
         self.apply_hidden()
+        for module_id in self.folded & set(self.compact_cards):
+            self.set_card_collapsed(self.compact_cards[module_id], True)
 
         pos = self.settings.value("pos")
         if pos is not None:
@@ -1575,7 +1604,7 @@ class Monitor(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
 
-        c = self.c_cpu = Card("cpu", "CPU", short_name(self.cpu.name))
+        c = self.c_cpu = Card("cpu", "CPU", short_name(self.cpu.name), collapsible=True)
         c.add(self.graph("cpu", COMPACT_COLS))
         c.stats = c.add(label("", TEXT, 11))
         c.bar_label, _ = c.add_row(f"{self.cpu.threads} threads")
@@ -1584,7 +1613,7 @@ class Monitor(QWidget):
 
         self.c_gpus = []
         for i, gpu in enumerate(self.gpus):
-            c = Card(f"gpu{i}", "iGPU" if gpu.integrated else "GPU", short_name(gpu.name))
+            c = Card(f"gpu{i}", "iGPU" if gpu.integrated else "GPU", short_name(gpu.name), collapsible=True)
             c.add(self.graph(f"gpu{i}", COMPACT_COLS))
             c.stats = c.add(label("", TEXT, 11))
             c.mem_label, c.mem_pct = c.add_row("")
@@ -1592,7 +1621,7 @@ class Monitor(QWidget):
             self.c_gpus.append(c)
             cards[c.module_id] = c
 
-        c = self.c_ram = Card("ram", "RAM", f"{gib(self.ram.total):.0f} Go")
+        c = self.c_ram = Card("ram", "RAM", f"{gib(self.ram.total):.0f} Go", collapsible=True)
         c.add(self.graph("ram", COMPACT_COLS))
         c.stats = c.add(label("", TEXT, 11))
         c.mem_label, c.mem_pct = c.add_row("")
@@ -1603,7 +1632,7 @@ class Monitor(QWidget):
 
         self.c_bat = None
         if self.sys.bat:
-            c = self.c_bat = Card("bat", "BATTERIE", "")
+            c = self.c_bat = Card("bat", "BATTERIE", "", collapsible=True)
             c.mem = c.add(HalftoneBar(9))
             c.stats = c.add(label("", TEXT, 11))
             c.split_label, c.split_total = c.add_row("Consommation")
@@ -1741,10 +1770,10 @@ class Monitor(QWidget):
 
     @staticmethod
     def add_card(lay, card, index=-1):
-        """Une carte avec graphe s'étire en hauteur ; les autres gardent leur taille."""
-        card.setSizePolicy(QSizePolicy.Preferred,
-                           QSizePolicy.Expanding if card.elastic else QSizePolicy.Maximum)
-        lay.insertWidget(index, card, 1 if card.elastic else 0)
+        """Une carte avec graphe s'étire en hauteur ; les autres (et les repliées) non."""
+        grow = card.elastic and not card.collapsed
+        card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding if grow else QSizePolicy.Maximum)
+        lay.insertWidget(index, card, 1 if grow else 0)
 
     @staticmethod
     def cards_in(lay):
@@ -1855,6 +1884,42 @@ class Monitor(QWidget):
         self.settings.setValue("hidden", json.dumps(sorted(self.hidden)))
         self.apply_hidden()
 
+    def toggle_card(self, card):
+        self.set_card_collapsed(card, not card.collapsed, adjust=True)
+
+    def set_card_collapsed(self, card, collapsed, adjust=False):
+        """Replie ou déplie un module de la vue compacte. Avec adjust, la fenêtre
+        rétrécit (ou regrandit) de la place libérée, sans toucher aux autres modules."""
+        before, window_before = card.height(), self.height()
+        card.set_collapsed(collapsed)
+        lay = next((l for _, l in self.compact_cols if l.indexOf(card) >= 0), None)
+        if lay is not None:
+            grow = card.elastic and not collapsed
+            card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding if grow else QSizePolicy.Maximum)
+            lay.setStretchFactor(card, 1 if grow else 0)
+        (self.folded.add if collapsed else self.folded.discard)(card.module_id)
+        self.settings.setValue("collapsed", json.dumps(sorted(self.folded)))
+        if not adjust or not self.isVisible():
+            return
+        # Les tailles minimales des modules sont recalculées de façon différée par Qt :
+        # on applique ces recalculs maintenant, sinon la fenêtre croirait que le
+        # module replié occupe encore sa place.
+        for _ in range(3):
+            QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
+        card.layout().activate()
+        self.layout().activate()
+        if collapsed:
+            card.expanded_h = before
+            delta = before - card.sizeHint().height()
+        else:   # hauteur d'avant le repli si on la connaît, sinon sa taille naturelle
+            delta = (getattr(card, "expanded_h", None) or card.sizeHint().height()) - before
+        geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        if collapsed:
+            h = window_before - delta
+        else:                  # en dépliant, ne pas dépasser le bas de l'écran
+            h = min(window_before + delta, max(window_before, geo.bottom() - self.y() + 1))
+        self.resize(self.width(), max(self.minimumSizeHint().height(), h))
+
     def apply_hidden(self):
         for cards, _, _ in self.layouts.values():
             for module_id, card in cards.items():
@@ -1862,6 +1927,9 @@ class Monitor(QWidget):
 
     def reset_layout(self):
         """Ordre des modules et tailles des deux vues par défaut."""
+        for card in list(self.compact_cards.values()):
+            if card.collapsed:
+                self.set_card_collapsed(card, False)
         for key in ("order_compact", "order_detail", "size_compact", "size_detail"):
             self.settings.remove(key)
         for key, (cards, columns, default) in list(self.layouts.items()):

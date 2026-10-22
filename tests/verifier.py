@@ -198,6 +198,26 @@ w.close()
 w = m.Monitor()
 verifie("l'état replié est retenu après relance", w.compact_cards[carte.module_id].collapsed)
 
+if w.c_bat:
+    print("Consommation repliable (module Batterie)")
+    w.show()
+    w.expand.setChecked(False)
+    QTest.qWait(1200)
+    w.move(20, 10)
+    b = w.c_bat
+    if b.collapsed:
+        w.toggle_card(b)
+        QTest.qWait(100)
+    h0, b0 = w.height(), b.height()
+    w.toggle_section(b, "conso")
+    QTest.qWait(100)
+    verifie("repliée : la liste disparaît, jauge et total restent",
+            not b.split.isVisible() and b.mem.isVisible() and b.split_total.isVisible())
+    verifie("la fenêtre rétrécit de la place libérée", abs((h0 - w.height()) - (b0 - b.height())) <= 2)
+    w.toggle_section(b, "conso")
+    QTest.qWait(100)
+    verifie("dépliée : tout revient", b.split.isVisible() and abs(w.height() - h0) <= 2)
+
 print()
 print("Tout est bon." if not echecs else f"{len(echecs)} échec(s) : {', '.join(echecs)}")
 sys.exit(1 if echecs else 0)

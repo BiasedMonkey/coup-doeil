@@ -1177,6 +1177,19 @@ class Grip(QLabel):
         self.window().drag_end(self.card)
 
 
+def chevron(tip):
+    """Petit bouton ▾ / ▸ pour replier ou déplier."""
+    b = QPushButton("▾")
+    b.setFixedSize(16, 18)
+    b.setCursor(Qt.PointingHandCursor)
+    b.setToolTip(tip)
+    b.setStyleSheet(
+        "QPushButton{color:rgba(230,232,238,0.55); font-size:12px; border:none;"
+        " border-radius:5px; background:transparent;}"
+        "QPushButton:hover{color:#5ac8fa; background:rgba(90,200,250,0.16);}")
+    return b
+
+
 class Card(QWidget):
     """Bloc arrondi : poignée, titre, nom du matériel, grosse valeur à droite."""
 
@@ -1193,15 +1206,9 @@ class Card(QWidget):
         head.addWidget(Grip(self))
         self.collapsed = False
         self.parts = []                  # tout sauf l'en-tête : ce qu'on masque en repliant
+        self.folded_parts = set()         # sous-parties repliées (ex. la consommation)
         if collapsible:
-            self.chevron = QPushButton("▾")
-            self.chevron.setFixedSize(16, 20)
-            self.chevron.setCursor(Qt.PointingHandCursor)
-            self.chevron.setToolTip("Replier / déplier ce module")
-            self.chevron.setStyleSheet(
-                "QPushButton{color:rgba(230,232,238,0.55); font-size:12px; border:none;"
-                " border-radius:5px; background:transparent;}"
-                "QPushButton:hover{color:#5ac8fa; background:rgba(90,200,250,0.16);}")
+            self.chevron = chevron("Replier / déplier ce module")
             self.chevron.clicked.connect(lambda: self.window().toggle_card(self))
             head.addWidget(self.chevron)
         head.addWidget(label(title, MUTED, 11, True, 1, reserve=title))
@@ -1234,11 +1241,21 @@ class Card(QWidget):
     def set_watts(self, w, suffix=""):
         self.watts.setText("" if w is None else f"⚡ {w:.1f} W{suffix}")
 
+    def fold_with(self, name, widget):
+        self.sections = getattr(self, "sections", {})
+        self.sections[name] = widget
+
+    def set_section_folded(self, name, folded):
+        w = self.sections[name]
+        (self.folded_parts.add if folded else self.folded_parts.discard)(w)
+        w.setVisible(not folded and not self.collapsed)
+        self.section_buttons[name].setText("▸" if folded else "▾")
+
     def set_collapsed(self, collapsed):
         """Replié : seule la ligne de titre reste (nom, température, watts, %)."""
         self.collapsed = collapsed
         for w in self.parts:
-            w.setVisible(not collapsed)
+            w.setVisible(not collapsed and w not in self.folded_parts)
         if hasattr(self, "chevron"):
             self.chevron.setText("▸" if collapsed else "▾")
 
@@ -1252,8 +1269,18 @@ class Card(QWidget):
             self.body.addWidget(w)
         return w
 
-    def add_row(self, left, right=None):
+    def add_row(self, left, right=None, toggle=None):
+        """Ligne « texte … valeur ». Avec toggle (nom), un bouton ▾ devant le texte
+        replie ou déplie la sous-partie qu'on attachera ensuite (fold_with)."""
         row = QHBoxLayout()
+        if toggle:
+            row.setSpacing(4)
+            b = chevron("Replier / déplier")
+            b.clicked.connect(lambda: self.window().toggle_section(self, toggle))
+            self.section_buttons = getattr(self, "section_buttons", {})
+            self.section_buttons[toggle] = b
+            row.addWidget(b)
+            self.parts.append(b)
         a = label(left)
         row.addWidget(a)
         row.addStretch()
@@ -1504,8 +1531,9 @@ class Monitor(QWidget):
         self.layouts = {}
         try:
             self.folded = set(json.loads(self.settings.value("collapsed", "[]") or "[]"))
+            self.folded_sections = set(json.loads(self.settings.value("folded_sections", "[]") or "[]"))
         except ValueError:
-            self.folded = set()
+            self.folded, self.folded_sections = set(), set()
 
         root = QVBoxLayout(self)
         root.setSizeConstraint(QLayout.SetMinimumSize)  # taille libre, jamais sous le contenu
@@ -1546,6 +1574,11 @@ class Monitor(QWidget):
         self.apply_hidden()
         for module_id in self.folded & set(self.compact_cards):
             self.set_card_collapsed(self.compact_cards[module_id], True)
+        for key in self.folded_sections:
+            view, module_id, name = key.split(":")
+            card = (self.detail_cards if view == "d" else self.compact_cards).get(module_id)
+            if card is not None and name in getattr(card, "sections", {}):
+                card.set_section_folded(name, True)
 
         pos = self.settings.value("pos")
         if pos is not None:
@@ -1635,8 +1668,9 @@ class Monitor(QWidget):
             c = self.c_bat = Card("bat", "BATTERIE", "", collapsible=True)
             c.mem = c.add(HalftoneBar(9))
             c.stats = c.add(label("", TEXT, 11))
-            c.split_label, c.split_total = c.add_row("Consommation")
+            c.split_label, c.split_total = c.add_row("Consommation", toggle="conso")
             c.split = c.add(PowerRows(self.part_names(), self.part_labels()))
+            c.fold_with("conso", c.split)
             cards["bat"] = c
 
         self.compact_cards = cards
@@ -1686,8 +1720,9 @@ class Monitor(QWidget):
             ("battery", "Batterie"), ("status", "État"),
             ("watts", "Puissance batterie"), ("left", "Temps restant"),
             ("uptime", "Allumé depuis"), ("procs", "Programmes")]))
-        c.split_label, c.split_total = c.add_row("Consommation par composant")
+        c.split_label, c.split_total = c.add_row("Consommation par composant", toggle="conso")
         c.split = c.add(PowerRows(self.part_names(), self.part_labels()))
+        c.fold_with("conso", c.split)
         c.add(label("Programmes — CPU (100 % = 1 thread)", MUTED, 10))
         c.procs = c.add(ProcList(5))
         cards["sys"] = c
@@ -1884,6 +1919,26 @@ class Monitor(QWidget):
         self.settings.setValue("hidden", json.dumps(sorted(self.hidden)))
         self.apply_hidden()
 
+    def toggle_section(self, card, name):
+        folded = card.sections[name] not in card.folded_parts
+        key = f"{'d' if card in self.detail_cards.values() else 'c'}:{card.module_id}:{name}"
+        (self.folded_sections.add if folded else self.folded_sections.discard)(key)
+        self.settings.setValue("folded_sections", json.dumps(sorted(self.folded_sections)))
+        before, window_before = card.height(), self.height()
+        card.set_section_folded(name, folded)
+        if self.detailed:
+            return                         # grande vue : les colonnes s'arrangent seules
+        for _ in range(3):
+            QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
+        card.layout().activate()
+        self.layout().activate()
+        delta = card.sizeHint().height() - before
+        geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        h = window_before + delta
+        if delta > 0:                      # en dépliant, ne pas dépasser le bas de l'écran
+            h = min(h, max(window_before, geo.bottom() - self.y() + 1))
+        self.resize(self.width(), max(self.minimumSizeHint().height(), h))
+
     def toggle_card(self, card):
         self.set_card_collapsed(card, not card.collapsed, adjust=True)
 
@@ -1930,6 +1985,12 @@ class Monitor(QWidget):
         for card in list(self.compact_cards.values()):
             if card.collapsed:
                 self.set_card_collapsed(card, False)
+        for cards in (self.compact_cards, self.detail_cards):
+            for card in cards.values():
+                for name in getattr(card, "sections", {}):
+                    card.set_section_folded(name, False)
+        self.folded_sections.clear()
+        self.settings.remove("folded_sections")
         for key in ("order_compact", "order_detail", "size_compact", "size_detail"):
             self.settings.remove(key)
         for key, (cards, columns, default) in list(self.layouts.items()):

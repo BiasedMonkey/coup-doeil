@@ -246,7 +246,7 @@ w.refresh()
 verifie("la languette montre un point par composant", len(w.dock_tab.levels) == 2 + len(w.gpus))
 w.move(5, 500)
 QTest.qWait(950)
-verifie("glissée le long du bord : recollée, à 2 px du bord", w.x() == m.DOCK_MARGIN and w.y() == 500)
+verifie("glissée le long du bord : recollée, à 2 px du bord", w.x() + w.dock_tab.pad[0] == m.DOCK_MARGIN and w.y() == 500)
 QTest.mousePress(w.dock_tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
 QTest.mouseRelease(w.dock_tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
 QTest.qWait(550)
@@ -278,7 +278,7 @@ milieu = 150 + w.height() // 2
 w.dock_btn.click()
 QTest.qWait(550)
 verifie("réduite sur place, à mi-hauteur de la fenêtre",
-        w.docked == "float" and abs(w.x() - 306) <= 1 and abs(w.y() + w.height() // 2 - milieu) <= 1,
+        w.docked == "float" and abs(w.x() + m.TAB_HIT - 306) <= 1 and abs(w.y() + w.height() // 2 - milieu) <= 1,
         f"languette en {w.pos().toTuple()}")
 QTest.mousePress(w.dock_tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
 QTest.mouseRelease(w.dock_tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
@@ -296,7 +296,7 @@ QTest.mousePress(w.dock_tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
 QTest.mouseRelease(w.dock_tab, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
 QTest.qWait(550)
 verifie("déployée centrée verticalement sur la languette",
-        abs(w.y() + w.height() // 2 - milieu) <= 1 and w.x() == 894, f"{w.pos().toTuple()}")
+        abs(w.y() + w.height() // 2 - milieu) <= 1 and w.x() == 904, f"{w.pos().toTuple()}")
 QTest.qWait(1200)
 w.dock_btn.click()
 QTest.qWait(550)
@@ -364,7 +364,7 @@ verifie("⊟ : referme dans la languette", w.isMinimized() and t.isVisible())
 clic_languette()
 t.move(2030, 500)
 QTest.qWait(700)
-verifie("lâchée près du bord droit : s'y colle", t.x() + t.width() == 2048 - m.DOCK_MARGIN)
+verifie("lâchée près du bord droit : s'y colle", t.x() + t.width() == 2048 and t.tab.pad[2] == m.DOCK_MARGIN)
 verifie("non gérée par le gestionnaire de fenêtres (ne se cache pas avec la fenêtre)",
         bool(t.windowFlags() & Qt.X11BypassWindowManagerHint))
 t.move(900, 400)
@@ -404,6 +404,24 @@ QTest.qWait(300)
 verifie("✕ avec l'icône de notification : la fenêtre est rangée, pas fermée", w.isMinimized())
 w.tray = None
 w.showNormal()
+
+print("Zone cliquable invisible autour de la languette")
+w.show()
+w.expand.setChecked(False)
+QTest.qWait(1200)
+w.move(500, 300)
+QTest.qWait(600)
+w.dock_btn.click()
+QTest.qWait(600)
+tab = w.dock_tab
+image = w.grab().toImage()                 # la fenêtre rangée = la languette (et sa marge)
+verifie("la marge est transparente (invisible)", image.pixelColor(2, 2).alpha() == 0
+        and image.pixelColor(tab.width() - 3, tab.height() // 2).alpha() == 0)
+verifie("la cible fait 20 px de plus en largeur et en hauteur", tab.width() == 22 + 2 * m.TAB_HIT)
+QTest.mousePress(tab, Qt.LeftButton, Qt.NoModifier, QPoint(3, tab.height() // 2))       # dans la marge
+QTest.mouseRelease(tab, Qt.LeftButton, Qt.NoModifier, QPoint(3, tab.height() // 2))
+QTest.qWait(600)
+verifie("un clic dans la marge invisible déploie la fenêtre", w.docked is None and w.compact.isVisible())
 
 print()
 print("Tout est bon." if not echecs else f"{len(echecs)} échec(s) : {', '.join(echecs)}")

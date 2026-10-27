@@ -1425,6 +1425,7 @@ def x11_skip_taskbar(wid, on):
 
 DOCK_GAP = 2          # px : déposée à moins de ça d'un bord (gauche/droit), la fenêtre s'y range
 DOCK_MARGIN = 2       # px d'espace entre la languette et le bord de l'écran
+TAB_HIT = 10          # px de zone cliquable invisible autour de la languette
 
 
 class DockTab(QWidget):
@@ -1438,10 +1439,24 @@ class DockTab(QWidget):
         self.host = host or mon            # la fenêtre qu'on déplace en glissant la languette
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Clic : déployer Coup d'œil — glisser : déplacer le long du bord")
-        self.resize_for(4)
+        self.n = 4
+        self.set_edge("left")
+
+    def set_edge(self, edge):
+        """Marge invisible (mais cliquable) autour de la partie visible : TAB_HIT px,
+        sauf côté bord de l'écran quand elle y est collée (la languette y reste à
+        DOCK_MARGIN px du bord ; le bord de l'écran arrête la souris de toute façon)."""
+        self.edge = edge
+        left = DOCK_MARGIN if edge == "left" else TAB_HIT
+        right = DOCK_MARGIN if edge == "right" else TAB_HIT
+        self.pad = (left, TAB_HIT, right, TAB_HIT)
+        self.resize_for(self.n)
+        self.update()
 
     def resize_for(self, n):
-        self.setFixedSize(22, 30 + 14 * n)
+        self.n = n
+        l, t, r, b = self.pad
+        self.setFixedSize(22 + l + r, 30 + 14 * n + t + b)
 
     def set_levels(self, levels):
         """levels : charge de chaque composant en %, None s'il dort."""
@@ -1454,7 +1469,9 @@ class DockTab(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        w, h, r = self.width(), self.height(), 9
+        l, t, rr, b = self.pad
+        p.translate(l, t)                                  # la marge reste transparente
+        w, h, r = self.width() - l - rr, self.height() - t - b, 9
         path = QPainterPath()
         path.addRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), r, r)
         p.fillPath(path, QColor(18, 20, 26, 245))
@@ -1533,17 +1550,21 @@ class TabWindow(QWidget):
         geo = (self.screen() or QApplication.primaryScreen()).availableGeometry()
         x, w = self.x(), self.width()
         if x <= geo.left() + self.SNAP:
-            x, edge = geo.left() + DOCK_MARGIN, "left"
+            edge = "left"
         elif x + w - 1 >= geo.right() - self.SNAP:
-            x, edge = geo.right() - w + 1 - DOCK_MARGIN, "right"
+            edge = "right"
         else:
             edge = "float"
+        if edge != self.tab.edge:
+            self.tab.set_edge(edge)               # la marge change de côté : taille à jour
+            w = self.width()
+        if edge == "left":
+            x = geo.left()
+        elif edge == "right":
+            x = geo.right() - w + 1
         y = max(geo.top(), min(self.y(), geo.bottom() - self.height() + 1))
         if (x, y) != (self.x(), self.y()):
             self.move(x, y)
-        if edge != self.tab.edge:
-            self.tab.edge = edge
-            self.tab.update()
         self.mon.settings.setValue("ptab_pos", QPoint(x, y))
 
 
@@ -2652,8 +2673,8 @@ class Monitor(QWidget):
     # --- fenêtre sans bordure : fond + déplacement --------------------------
 
     def paintEvent(self, _):
-        if self.morph.isVisible():
-            return                               # pendant l'animation : la couche peint tout
+        if self.morph.isVisible() or self.docked:
+            return                               # animation ou languette : elles peignent tout
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         path = QPainterPath()
@@ -2728,7 +2749,7 @@ class Monitor(QWidget):
             # languette permanente : elle vient se poser contre ce bord, à mi-hauteur
             left = self.x() <= geo.left() + DOCK_GAP
             t = self.ptab
-            t.move(geo.left() + DOCK_MARGIN if left else geo.right() - t.width() + 1 - DOCK_MARGIN,
+            t.move(geo.left() if left else geo.right() - t.width() + 1,
                    self.y() + self.height() // 2 - t.height() // 2)
             t.snap()
             self.hide_to_ptab()
@@ -2748,7 +2769,9 @@ class Monitor(QWidget):
             self.hide_to_ptab()
             return
         mid = self.y() + self.height() // 2
-        self.dock_animated("float", anchor=QPoint(self.x() + self.FLOAT_INSET.x(), mid - self.dock_tab.height() // 2))
+        self.dock_tab.set_edge("float")
+        self.dock_animated("float", anchor=QPoint(self.x() + self.FLOAT_INSET.x() - TAB_HIT,
+                                                  mid - self.dock_tab.height() // 2))
 
     # --- menu, zone de notification, quitter ----------------------------
 
@@ -2862,7 +2885,7 @@ class Monitor(QWidget):
             pos = self.settings.value("ptab_pos")
             if not isinstance(pos, QPoint):    # par défaut : bord gauche, à mi-hauteur de la fenêtre
                 geo = self.screen_geo()
-                pos = QPoint(geo.left() + DOCK_MARGIN, self.y() + self.height() // 2 - self.ptab.height() // 2)
+                pos = QPoint(geo.left(), self.y() + self.height() // 2 - self.ptab.height() // 2)
             self.ptab.move(pos)
             self.ptab.show()
             self.ptab.snap()
@@ -2925,11 +2948,12 @@ class Monitor(QWidget):
     def tab_rect(self, edge, anchor=None):
         """Où sera la languette (coordonnées de l'écran)."""
         self.update_dock_tab()
+        self.dock_tab.set_edge(edge)
         geo, size = self.screen_geo(), self.dock_tab.size()
         if edge == "float":
             pos = anchor
         else:
-            x = geo.left() + DOCK_MARGIN if edge == "left" else geo.right() - size.width() + 1 - DOCK_MARGIN
+            x = geo.left() if edge == "left" else geo.right() - size.width() + 1
             pos = QPoint(x, self.y() + self.height() // 2 - size.height() // 2)
         x = max(geo.left(), min(pos.x(), geo.right() - size.width() + 1))
         y = max(geo.top(), min(pos.y(), geo.bottom() - size.height() + 1))
@@ -2956,7 +2980,7 @@ class Monitor(QWidget):
         for w in (self.topbar, self.compact, self.detail):
             w.hide()
         self.layout().setContentsMargins(0, 0, 0, 0)
-        self.dock_tab.edge = edge
+        self.dock_tab.set_edge(edge)
         self.update_dock_tab()
         self.dock_tab.show()
         for _ in range(3):
@@ -2975,9 +2999,9 @@ class Monitor(QWidget):
         if self.docked == "float":               # posée librement : juste rester dans l'écran
             x = max(geo.left(), min(self.x(), geo.right() - self.width() + 1))
         elif self.docked == "left":
-            x = geo.left() + DOCK_MARGIN
+            x = geo.left()                       # la marge (DOCK_MARGIN) est dans la languette
         else:
-            x = geo.right() - self.width() + 1 - DOCK_MARGIN
+            x = geo.right() - self.width() + 1
         y = max(geo.top(), min(self.y() if y is None else y, geo.bottom() - self.height() + 1))
         if (x, y) != (self.x(), self.y()):
             self.move(x, y)
@@ -3003,7 +3027,7 @@ class Monitor(QWidget):
         # milieu de sa hauteur), décalée juste assez pour rester entière à l'écran.
         y = tab_mid - self.height() // 2
         if edge == "float":                   # réduite sur place : à l'endroit de la languette
-            x = tab_x - self.FLOAT_INSET.x()
+            x = tab_x + TAB_HIT - self.FLOAT_INSET.x()
         else:                                 # rangée en la déposant au bord : à 8 px du bord
             x = geo.left() + 8 if edge == "left" else geo.right() - self.width() - 7
         x = max(geo.left(), min(x, geo.right() - self.width() + 1))

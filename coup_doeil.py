@@ -1833,7 +1833,7 @@ class Monitor(QWidget):
         self.animations = self.settings.value("animations", True, type=bool)
         self.ptab = None                                  # languette toujours affichée
         self.tray = None                                  # icône dans la zone de notification
-        if self.settings.value("tray", False, type=bool):
+        if self.settings.value("tray", True, type=bool):      # activée par défaut
             QTimer.singleShot(300, lambda: self.set_tray(True))
         if self.settings.value("tab_always", False, type=bool):
             QTimer.singleShot(400, lambda: self.set_tab_always(True))

@@ -39,6 +39,7 @@ en douceur.
 - **Rafraîchissement** : 0,5 / 1 / 2 / 5 s.
 - **Lissage des courbes** : aucun, léger, moyen, fort.
 - **Opacité du fond** : de 30 à 100 % (texte et courbes restent nets).
+- **Couleurs** : vives, douces, pastel ou très discrètes.
 - **Défilement fluide** : à couper pour économiser un peu de CPU.
 - **Animations** : transition languette ↔ fenêtre.
 - **Languette toujours affichée**.

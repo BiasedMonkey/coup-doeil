@@ -461,11 +461,21 @@ TEXT = "#e6e8ee"
 MUTED = "#8a90a0"
 
 
+COLOR_SAT = 1.0       # intensité des couleurs (option) : 1 = vives, plus bas = plus douces
+
+
 def heat_color(v):
     """Couleur d'un point selon sa valeur v ∈ [0, 100]."""
-    # Dégradé cyan (0 %) → vert → jaune → rouge (100 %)
+    # Dégradé cyan (0 %) → vert → jaune → rouge (100 %). Plus la saturation baisse,
+    # plus la luminosité baisse un peu aussi : des teintes douces plutôt que délavées.
     v = max(0.0, min(100.0, v)) / 100
-    return QColor.fromHsvF(0.53 * (1 - v) ** 1.3, 0.75, 0.98)
+    return QColor.fromHsvF(0.53 * (1 - v) ** 1.3, 0.75 * COLOR_SAT, 0.98 - 0.12 * (1 - COLOR_SAT))
+
+
+def tone(c):
+    """Applique l'intensité choisie à une couleur fixe (ex. couleurs des composants)."""
+    h, s, v, a = c.getHsvF()
+    return QColor.fromHsvF(max(0.0, h), s * COLOR_SAT, v - 0.12 * (1 - COLOR_SAT), a)
 
 
 def over(top, bottom):
@@ -939,7 +949,7 @@ class PowerRows(QWidget):
         pen.setCapStyle(Qt.RoundCap)
         for i, (name, watts) in enumerate(self.parts):
             y = i * self.ROW + self.ROW / 2
-            color = PART_COLORS[name]
+            color = tone(PART_COLORS[name])
             known = watts is not None
             frac = watts / self.total if known and self.total > 0 else 0
             # nom (avec sa pastille de couleur)
@@ -1613,6 +1623,9 @@ class OptionsPanel(QWidget):
         grid.addWidget(QLabel("Rafraîchissement"), 0, 0)
         grid.addWidget(choix([("0,5 s", 500), ("1 s", 1000), ("2 s", 2000), ("5 s", 5000)],
                              mon.refresh_ms, mon.set_refresh), 0, 1)
+        grid.addWidget(QLabel("Couleurs"), 4, 0)
+        grid.addWidget(choix([("Vives", 100), ("Douces", 75), ("Pastel", 50), ("Très discrètes", 30)],
+                             round(COLOR_SAT * 100), mon.set_color_saturation), 4, 1)
         grid.addWidget(QLabel("Taille du texte"), 3, 0)
         grid.addWidget(choix([("80 %", 80), ("90 %", 90), ("100 %", 100), ("115 %", 115),
                               ("130 %", 130), ("150 %", 150)],
@@ -1708,6 +1721,8 @@ class Monitor(QWidget):
         self.tick = 0
         self.last_sample = time.monotonic()
         set_font_scale(self.settings.value("font_scale", 100, type=int) / 100)
+        global COLOR_SAT
+        COLOR_SAT = self.settings.value("color_sat", 100, type=int) / 100
         self.refresh_ms = self.settings.value("refresh_ms", REFRESH_MS, type=int)
         self.smooth_scroll = self.settings.value("smooth_scroll", True, type=bool)
         self.smooth_passes = self.settings.value("smooth_passes", SMOOTH_PASSES, type=int)
@@ -2086,6 +2101,23 @@ class Monitor(QWidget):
         for w in self.findChildren(Threads):
             w.update()
         self.layout().activate()
+
+    def set_color_saturation(self, pct):
+        """Intensité des couleurs : tout ce qui est coloré est redessiné."""
+        global COLOR_SAT
+        COLOR_SAT = pct / 100
+        self.settings.setValue("color_sat", pct)
+        for g in self.graphs:                      # courbes à retracer
+            g.cache_key = g.prev = None
+        for cards in (self.compact_cards, self.detail_cards):
+            for c in cards.values():
+                c.temp_state = None                # températures à recolorer
+        self.refresh(sample=False)
+        for w in self.findChildren(QWidget):
+            w.update()
+        for tab in (self.dock_tab, self.ptab.tab if self.ptab else None):
+            if tab:
+                tab.update()
 
     def set_bg_opacity(self, pct):
         set_background_opacity(pct)

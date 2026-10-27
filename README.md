@@ -27,6 +27,8 @@ en douceur.
 - **Consommation repliable** : le ▾ devant « Consommation » (module Batterie, carte Système) masque la liste des composants et ne garde que le total.
 - **Rangée au bord de l'écran** : dépose la fenêtre contre le bord gauche ou droit, elle se range en une languette (un point coloré par composant pour garder un œil sur la charge). Le bouton **⊟** (en haut à gauche) réduit la fenêtre en languette **sur place**, à mi-hauteur ; la languette se pose ensuite où l'on veut. Au clic, la fenêtre se déploie **centrée verticalement sur la languette** (décalée si besoin pour rester entière à l'écran). Une courte animation fait « sortir » la fenêtre de la languette, et l'y ramène (désactivable dans les options).
 - **Languette toujours affichée** (option) : la languette reste à l'écran en permanence ; un clic ouvre la fenêtre à côté d'elle, centrée sur elle, ou la referme. On la pose où l'on veut, elle s'aimante aux bords.
+- **Clic droit sur la languette** : afficher / masquer, vue détaillée, toujours au-dessus, options… et **Quitter**.
+- **Zone de notification** (option) : une icône dans *État et notifications* (clic gauche : afficher / masquer, clic droit : menu, survol : résumé CPU / GPU / RAM) ; la fenêtre quitte alors la barre des tâches, et ✕ la range au lieu de quitter.
 - **Coin supérieur gauche** (KDE Plasma) : y amener la souris affiche ou masque Coup d'œil — `./install.sh --coin` installe le petit script KWin correspondant (aussi disponible en raccourci clavier « Afficher / masquer Coup d'œil »).
 - **Fenêtre redimensionnable** par ses bords ; les courbes prennent l'espace en plus. Chaque vue retient sa taille, sa position et l'ordre de ses modules.
 - **Au lancement**, la fenêtre s'ouvre toujours dépliée, en vue compacte, à sa dernière place.
@@ -43,6 +45,7 @@ en douceur.
 - **Défilement fluide** : à couper pour économiser un peu de CPU.
 - **Animations** : transition languette ↔ fenêtre.
 - **Languette toujours affichée**.
+- **Icône dans la zone de notification** (et plus dans la barre des tâches).
 - **Lancer à l'ouverture de session**.
 - **Modules affichés** : masquer ceux dont tu n'as pas besoin.
 - **Réinitialiser la disposition** : ordre des modules et tailles par défaut.

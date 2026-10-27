@@ -21,7 +21,7 @@ os.environ["QT_QPA_PLATFORM"] = f"offscreen:configfile={ecran}"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import coup_doeil as m  # noqa: E402
-from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtCore import QPoint, Qt, QTimer  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -380,6 +380,30 @@ verifie("glisser : la languette suit la souris", t.pos().toTuple() == (900, 550)
 w.set_tab_always(False)
 QTest.qWait(200)
 verifie("option désactivée : languette retirée, fenêtre visible", w.ptab is None and not w.isMinimized())
+
+print("Clic droit et zone de notification")
+w.show()
+QTest.qWait(300)
+textes = [a.text() for a in w.context_menu().actions() if a.text()]
+verifie("menu : afficher/masquer, options, quitter…",
+        any("Afficher" in t or "Masquer" in t for t in textes) and "Options…" in textes
+        and "Quitter Coup d'œil" in textes, str(textes))
+w.dock_btn.click()
+QTest.qWait(600)
+ouvert = []
+QTimer.singleShot(250, lambda: (ouvert.append(QApplication.activePopupWidget() is not None),
+                                QApplication.activePopupWidget() and QApplication.activePopupWidget().close()))
+QTest.mousePress(w.dock_tab, Qt.RightButton, Qt.NoModifier, QPoint(10, 10))
+QTest.qWait(400)
+verifie("clic droit sur la languette : le menu s'ouvre", ouvert == [True])
+w.undock()
+QTest.qWait(600)
+w.tray = object()                          # simule l'icône de notification (absente hors écran)
+w.close_clicked()
+QTest.qWait(300)
+verifie("✕ avec l'icône de notification : la fenêtre est rangée, pas fermée", w.isMinimized())
+w.tray = None
+w.showNormal()
 
 print()
 print("Tout est bon." if not echecs else f"{len(echecs)} échec(s) : {', '.join(echecs)}")

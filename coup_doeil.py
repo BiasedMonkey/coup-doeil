@@ -21,10 +21,11 @@ if os.environ.get("XDG_SESSION_TYPE") == "wayland" and os.environ.get("DISPLAY")
 
 from PySide6.QtCore import (QEasingCurve, QEvent, QPoint, QPointF, QRect, QRectF, QSettings, QSize, Qt,
                             QTimer, QVariantAnimation)
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (QAction, QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen,
+                           QPixmap)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QGridLayout, QHBoxLayout,
-                               QLabel, QLayout, QPushButton, QSizePolicy, QSlider, QVBoxLayout,
-                               QWidget)
+                               QLabel, QLayout, QMenu, QPushButton, QSizePolicy, QSlider,
+                               QSystemTrayIcon, QVBoxLayout, QWidget)
 
 HISTORY = 90          # secondes gardées en mémoire (vue détaillée)
 COMPACT_COLS = 60     # secondes affichées en vue compacte
@@ -1378,6 +1379,48 @@ def legend(*items):
     return "&nbsp;&nbsp;".join(f"<span style='color:{c.name()}'>●</span> {t}" for c, t in items)
 
 
+def x11_skip_taskbar(wid, on):
+    """Demande au gestionnaire de fenêtres de ne pas montrer la fenêtre dans la
+    barre des tâches (_NET_WM_STATE_SKIP_TASKBAR / SKIP_PAGER). Qt n'a pas de
+    fonction pour ça sur une fenêtre normale ; le type de la fenêtre ne change pas,
+    donc les scripts KWin la traitent toujours comme une fenêtre normale."""
+    import ctypes
+    import ctypes.util
+    lib = ctypes.util.find_library("X11")
+    if not lib or not os.environ.get("DISPLAY"):
+        return False
+    x = ctypes.cdll.LoadLibrary(lib)
+    x.XOpenDisplay.restype = ctypes.c_void_p
+    x.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x.XInternAtom.restype = ctypes.c_ulong
+    x.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+    x.XDefaultRootWindow.restype = ctypes.c_ulong
+    x.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+    x.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long, ctypes.c_void_p]
+    x.XFlush.argtypes = x.XCloseDisplay.argtypes = [ctypes.c_void_p]
+
+    class ClientMessage(ctypes.Structure):          # XClientMessageEvent, complété à 192 octets
+        _fields_ = [("type", ctypes.c_int), ("serial", ctypes.c_ulong), ("send_event", ctypes.c_int),
+                    ("display", ctypes.c_void_p), ("window", ctypes.c_ulong),
+                    ("message_type", ctypes.c_ulong), ("format", ctypes.c_int),
+                    ("data", ctypes.c_long * 5), ("pad", ctypes.c_long * 12)]
+
+    dpy = x.XOpenDisplay(None)
+    if not dpy:
+        return False
+    try:
+        atom = lambda name: x.XInternAtom(dpy, name, 0)
+        ev = ClientMessage(type=33, send_event=1, display=dpy, window=wid,
+                           message_type=atom(b"_NET_WM_STATE"), format=32)
+        ev.data[:] = [1 if on else 0, atom(b"_NET_WM_STATE_SKIP_TASKBAR"),
+                      atom(b"_NET_WM_STATE_SKIP_PAGER"), 1, 0]
+        x.XSendEvent(dpy, x.XDefaultRootWindow(dpy), 0, (1 << 19) | (1 << 20), ctypes.byref(ev))
+        x.XFlush(dpy)
+    finally:
+        x.XCloseDisplay(dpy)
+    return True
+
+
 # ──────────────────────────────── languette ──────────────────────────────
 
 DOCK_GAP = 2          # px : déposée à moins de ça d'un bord (gauche/droit), la fenêtre s'y range
@@ -1429,8 +1472,11 @@ class DockTab(QWidget):
             p.drawEllipse(QPointF(w / 2, 30 + 14 * i), 4, 4)
 
     def mousePressEvent(self, e):
+        self.press = self.drag_from = None
+        if e.button() == Qt.RightButton:                  # menu : afficher, options, quitter…
+            self.mon.context_menu().exec(e.globalPosition().toPoint())
+            return
         self.press = e.globalPosition().toPoint()
-        self.drag_from = None
 
     def mouseMoveEvent(self, e):
         pos = e.globalPosition().toPoint()
@@ -1654,6 +1700,11 @@ class OptionsPanel(QWidget):
         anim.setChecked(mon.animations)
         anim.toggled.connect(mon.set_animations)
         lay.addWidget(anim)
+        tray = QCheckBox("Icône dans la zone de notification (pas dans la barre des tâches)")
+        tray.setChecked(mon.tray is not None)
+        tray.setEnabled(QSystemTrayIcon.isSystemTrayAvailable())
+        tray.toggled.connect(mon.set_tray)
+        lay.addWidget(tray)
         always = QCheckBox("Languette toujours affichée")
         always.setToolTip("Un clic sur la languette ouvre ou referme la fenêtre")
         always.setChecked(mon.ptab is not None)
@@ -1764,7 +1815,7 @@ class Monitor(QWidget):
         self.pin.toggled.connect(self.set_on_top)
         top.addWidget(self.pin)
         close = self._button("✕", "Fermer")
-        close.clicked.connect(self.close)
+        close.clicked.connect(self.close_clicked)
         top.addWidget(close)
         root.addWidget(self.topbar)
 
@@ -1781,6 +1832,9 @@ class Monitor(QWidget):
         self.morph = Morph(self)
         self.animations = self.settings.value("animations", True, type=bool)
         self.ptab = None                                  # languette toujours affichée
+        self.tray = None                                  # icône dans la zone de notification
+        if self.settings.value("tray", False, type=bool):
+            QTimer.singleShot(300, lambda: self.set_tray(True))
         if self.settings.value("tab_always", False, type=bool):
             QTimer.singleShot(400, lambda: self.set_tab_always(True))
 
@@ -1817,6 +1871,8 @@ class Monitor(QWidget):
 
     def showEvent(self, e):
         super().showEvent(e)
+        if self.tray is not None:
+            QTimer.singleShot(0, lambda: x11_skip_taskbar(int(self.winId()), True))
         if self.wanted is None:
             # Un gestionnaire de fenêtres (ou un script KWin) peut replacer et
             # redimensionner une fenêtre qui s'ouvre. On note ce que l'appli veut
@@ -2337,6 +2393,7 @@ class Monitor(QWidget):
 
         if self.ptab:
             self.update_dock_tab()
+        self.update_tray()
         if self.isMinimized():
             return
         if self.docked:
@@ -2692,6 +2749,98 @@ class Monitor(QWidget):
             return
         mid = self.y() + self.height() // 2
         self.dock_animated("float", anchor=QPoint(self.x() + self.FLOAT_INSET.x(), mid - self.dock_tab.height() // 2))
+
+    # --- menu, zone de notification, quitter ----------------------------
+
+    def is_shown(self):
+        return self.isVisible() and not self.isMinimized() and not self.docked
+
+    def toggle_window(self):
+        """Afficher / masquer, quel que soit le mode (languette, rangée, normale)."""
+        if self.ptab:
+            self.tab_clicked(self.ptab)
+        elif self.docked:
+            self.undock()
+        elif self.isMinimized() or not self.isVisible():
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+        else:
+            self.showMinimized()
+
+    def ensure_shown(self):
+        if not self.is_shown():
+            self.toggle_window()
+
+    def context_menu(self):
+        """Menu du clic droit (languette, icône de notification)."""
+        menu = QMenu(self)
+        menu.addAction("Masquer Coup d'œil" if self.is_shown() else "Afficher Coup d'œil", self.toggle_window)
+        menu.addSeparator()
+
+        def case(text, checked, slot):
+            a = QAction(text, menu, checkable=True, checked=checked)
+            a.toggled.connect(slot)
+            menu.addAction(a)
+        case("Vue détaillée", self.detailed, lambda on: (self.ensure_shown(), self.expand.setChecked(on)))
+        case("Toujours au-dessus", self.pin.isChecked(), self.pin.setChecked)
+        case("Languette toujours affichée", self.ptab is not None, self.set_tab_always)
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            case("Icône dans la zone de notification", self.tray is not None, self.set_tray)
+        menu.addAction("Options…", lambda: (self.ensure_shown(), QTimer.singleShot(350, self.show_options)))
+        menu.addSeparator()
+        menu.addAction("Quitter Coup d'œil", self.quit_app)
+        return menu
+
+    def set_tray(self, on):
+        """Icône dans la zone État et notifications ; la fenêtre quitte la barre des tâches."""
+        self.settings.setValue("tray", on)
+        if on and self.tray is None and QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray = QSystemTrayIcon(QApplication.windowIcon(), self)
+            self.tray.setToolTip("Coup d'œil")
+            self.tray.activated.connect(self.tray_activated)
+            self.tray_menu = None
+            self.tray.show()
+        elif not on and self.tray is not None:
+            self.tray.hide()
+            self.tray.deleteLater()
+            self.tray = None
+            if self.isMinimized() or not self.isVisible():
+                self.showNormal()
+        if self.windowHandle() is not None:
+            x11_skip_taskbar(int(self.winId()), on and self.tray is not None)
+
+    def tray_activated(self, reason):
+        if reason == QSystemTrayIcon.Trigger:                 # clic gauche
+            self.toggle_window()
+        elif reason == QSystemTrayIcon.Context:               # clic droit : menu à jour
+            self.tray_menu = self.context_menu()
+            from PySide6.QtGui import QCursor
+            self.tray_menu.popup(QCursor.pos())
+
+    def update_tray(self):
+        d = getattr(self, "data", None)
+        if not (self.tray and d):
+            return
+        lines = [f"CPU {d['cpu']['load']:.0f} %  {fmt(d['cpu']['temp'], ' °C')}"]
+        for gpu, g in zip(self.gpus, d["gpus"]):
+            lines.append(f"{short_name(gpu.name)}  " + ("veille" if g["asleep"] else
+                         f"{g['load']:.0f} %  {fmt(g['temp'], ' °C')}"))
+        lines.append(f"RAM {d['ram']['load']:.0f} %")
+        self.tray.setToolTip("Coup d'œil\n" + "\n".join(lines))
+
+    def close_clicked(self):
+        if self.tray is not None:                 # avec l'icône de notification : on range
+            if self.ptab:
+                self.hide_to_ptab()
+            else:
+                self.showMinimized()
+        else:
+            self.quit_app()
+
+    def quit_app(self):
+        self.close()
+        QApplication.quit()
 
     def tab_clicked(self, host):
         if host is self:                      # languette intégrée : on redéploie

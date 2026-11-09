@@ -176,7 +176,10 @@ w.reset_layout()
 verifie("réinitialiser remet l'ordre par défaut",
         [c.module_id for c in w.cards_in(w.compact_cols[0][1])][0] == "cpu")
 m.set_autostart(True)
+contenu = m.AUTOSTART.read_text() if m.AUTOSTART.exists() else ""
 verifie("lancement à l'ouverture de session : fichier créé", m.AUTOSTART.exists())
+verifie("fichier de démarrage robuste (chemin complet, lancé une fois le bureau prêt)",
+        f"Exec={sys.executable} " in contenu and "X-KDE-autostart-phase=2" in contenu, contenu)
 m.set_autostart(False)
 
 print("Replier / déplier (vue compacte)")

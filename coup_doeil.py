@@ -1630,13 +1630,29 @@ AUTOSTART = (Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
              / "autostart" / "coup-doeil.desktop")
 
 
+INSTALLED = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "coup-doeil" / "coup_doeil.py"
+
+
 def set_autostart(on):
-    """Lancer Coup d'œil à l'ouverture de la session (fichier ~/.config/autostart)."""
+    """Lancer Coup d'œil à l'ouverture de la session (fichier ~/.config/autostart,
+    que KDE / systemd transforme en service au démarrage).
+    - chemin complet de Python et de la copie installée (pas celle d'un dossier de
+      travail, qui peut bouger) ;
+    - X-KDE-autostart-phase=2 : lancé une fois le bureau prêt (zone de notification
+      comprise), pas au tout début de l'ouverture de session."""
     if on:
+        script = INSTALLED if INSTALLED.exists() else Path(__file__).resolve()
         AUTOSTART.parent.mkdir(parents=True, exist_ok=True)
-        AUTOSTART.write_text("[Desktop Entry]\nType=Application\nName=Coup d'œil\n"
-                             f"Exec=python3 \"{Path(__file__).resolve()}\"\n"
-                             "Icon=coup-doeil\nX-GNOME-Autostart-enabled=true\n")
+        AUTOSTART.write_text(
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=Coup d'œil\n"
+            "Comment=Moniteur système (lancé à l'ouverture de session)\n"
+            f"Exec={sys.executable} \"{script}\"\n"
+            "Icon=coup-doeil\n"
+            "Terminal=false\n"
+            "X-KDE-autostart-phase=2\n"
+            "X-GNOME-Autostart-enabled=true\n")
     else:
         AUTOSTART.unlink(missing_ok=True)
 
@@ -1731,6 +1747,15 @@ class OptionsPanel(QWidget):
         always.setChecked(mon.ptab is not None)
         always.toggled.connect(mon.set_tab_always)
         lay.addWidget(always)
+        corners = QCheckBox("Sans languette (coins supérieurs pour afficher / masquer)")
+        corners.setToolTip("Pas de languette : les coins supérieurs gauche et droit de l'écran\n"
+                           "affichent ou masquent la fenêtre")
+        corners.setChecked(mon.corners)
+        corners.toggled.connect(mon.set_corners)
+        lay.addWidget(corners)
+        # les deux modes s'excluent : cocher l'un décoche l'autre
+        always.toggled.connect(lambda on: on and corners.setChecked(False))
+        corners.toggled.connect(lambda on: on and always.setChecked(False))
         auto = QCheckBox("Lancer à l'ouverture de session")
         auto.setChecked(AUTOSTART.exists())
         auto.toggled.connect(set_autostart)
@@ -1854,9 +1879,13 @@ class Monitor(QWidget):
         self.animations = self.settings.value("animations", True, type=bool)
         self.ptab = None                                  # languette toujours affichée
         self.tray = None                                  # icône dans la zone de notification
+        # sans languette : seuls les coins supérieurs de l'écran (script KWin) affichent / masquent
+        self.corners = self.settings.value("corners", False, type=bool)
+        if self.corners:
+            self.dock_btn.setToolTip(self.CORNERS_TIP)
         if self.settings.value("tray", True, type=bool):      # activée par défaut
             QTimer.singleShot(300, lambda: self.set_tray(True))
-        if self.settings.value("tab_always", False, type=bool):
+        if self.settings.value("tab_always", False, type=bool) and not self.corners:
             QTimer.singleShot(400, lambda: self.set_tab_always(True))
 
         self.timer = QTimer(self, interval=self.refresh_ms, timeout=self.refresh)
@@ -2743,6 +2772,8 @@ class Monitor(QWidget):
         if not getattr(self, "user_moving", False):
             return                       # démarrage, repositionnement automatique… : jamais
         self.user_moving = False
+        if self.corners:
+            return                       # sans languette : jamais rangée au bord
         geo = self.screen_geo()
         near = self.x() <= geo.left() + DOCK_GAP or self.x() + self.width() - 1 >= geo.right() - DOCK_GAP
         if near and self.ptab:
@@ -2767,6 +2798,9 @@ class Monitor(QWidget):
         la fenêtre se redéploiera centrée verticalement sur elle."""
         if self.ptab:
             self.hide_to_ptab()
+            return
+        if self.corners:                 # sans languette : on masque, un coin la réaffichera
+            self.showMinimized()
             return
         mid = self.y() + self.height() // 2
         self.dock_tab.set_edge("float")
@@ -2808,6 +2842,7 @@ class Monitor(QWidget):
         case("Vue détaillée", self.detailed, lambda on: (self.ensure_shown(), self.expand.setChecked(on)))
         case("Toujours au-dessus", self.pin.isChecked(), self.pin.setChecked)
         case("Languette toujours affichée", self.ptab is not None, self.set_tab_always)
+        case("Sans languette (coins supérieurs)", self.corners, self.set_corners)
         if QSystemTrayIcon.isSystemTrayAvailable():
             case("Icône dans la zone de notification", self.tray is not None, self.set_tray)
         menu.addAction("Options…", lambda: (self.ensure_shown(), QTimer.singleShot(350, self.show_options)))
@@ -2815,9 +2850,16 @@ class Monitor(QWidget):
         menu.addAction("Quitter Coup d'œil", self.quit_app)
         return menu
 
-    def set_tray(self, on):
-        """Icône dans la zone État et notifications ; la fenêtre quitte la barre des tâches."""
+    def set_tray(self, on, attempt=0):
+        """Icône dans la zone État et notifications ; la fenêtre quitte la barre des tâches.
+        Au démarrage de la session, la zone de notification peut ne pas être encore
+        prête : on réessaie toutes les 2 s pendant une minute."""
         self.settings.setValue("tray", on)
+        if on and self.tray is None and not QSystemTrayIcon.isSystemTrayAvailable():
+            if attempt < 30:
+                QTimer.singleShot(2000, lambda: self.set_tray(True, attempt + 1) if self.settings.value(
+                    "tray", True, type=bool) else None)
+            return
         if on and self.tray is None and QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = QSystemTrayIcon(QApplication.windowIcon(), self)
             self.tray.setToolTip("Coup d'œil")
@@ -2873,8 +2915,27 @@ class Monitor(QWidget):
         else:
             self.hide_to_ptab()
 
+    CORNERS_TIP = "Masquer (coin supérieur gauche ou droit de l'écran pour réafficher)"
+
+    def set_corners(self, on):
+        """Sans languette : ni languette permanente, ni rangement au bord. Le script
+        KWin coup-doeil-coin affiche / masque la fenêtre par les coins supérieurs."""
+        self.corners = on
+        self.settings.setValue("corners", on)
+        self.dock_btn.setToolTip(self.CORNERS_TIP if on else "Réduire en languette, sur place (ultra-compact)")
+        if not on:
+            return
+        if self.ptab is not None:
+            self.set_tab_always(False)
+        if self.docked:                        # rangée en languette : on la redéploie
+            anim, self.animations = self.animations, False
+            self.undock()
+            self.animations = anim
+
     def set_tab_always(self, on):
         self.settings.setValue("tab_always", on)
+        if on and self.corners:                # les deux modes s'excluent
+            self.set_corners(False)
         if on and self.ptab is None:
             if self.docked:                    # quitter le mode languette intégrée
                 anim, self.animations = self.animations, False
@@ -3064,8 +3125,34 @@ class Monitor(QWidget):
             self.ptab.tab.set_levels(levels)
 
 
+def single_instance(app):
+    """Une seule instance par session (et par dossier de configuration) : si
+    Coup d'œil tourne déjà — par exemple lancé à l'ouverture de session et rangé
+    dans la zone de notification —, on lui demande de s'afficher et on s'arrête."""
+    from PySide6.QtNetwork import QLocalServer, QLocalSocket
+    import hashlib
+    config = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    name = f"coup-doeil-{os.getuid()}-{hashlib.sha1(config.encode()).hexdigest()[:8]}"
+    sock = QLocalSocket()
+    sock.connectToServer(name)
+    if sock.waitForConnected(400):
+        sock.write(b"show")
+        sock.flush()
+        sock.waitForBytesWritten(400)
+        return None                                  # une autre instance s'en charge
+    QLocalServer.removeServer(name)                  # reste d'une instance plantée
+    server = QLocalServer(app)
+    server.listen(name)
+    return server
+
+
 def main():
     app = QApplication(sys.argv)
+    server = single_instance(app)
+    if server is None:
+        sys.exit(0)
+    if AUTOSTART.exists():
+        set_autostart(True)                          # remet à jour un ancien fichier de démarrage
     app.setApplicationName("Coup d'œil")
     app.setDesktopFileName("coup-doeil")        # relie la fenêtre à son lanceur
     app.setFont(QFont("Inter", 10))
@@ -3073,6 +3160,11 @@ def main():
     app.setWindowIcon(QIcon(str(icon)) if icon.exists() else QIcon.fromTheme("coup-doeil"))
     w = Monitor()
     w.show()
+
+    def on_connection():
+        conn = server.nextPendingConnection()
+        conn.readyRead.connect(lambda: (conn.readAll(), w.ensure_shown(), w.raise_(), w.activateWindow()))
+    server.newConnection.connect(on_connection)
     sys.exit(app.exec())
 
 

@@ -1,4 +1,4 @@
-// Coup d'œil — le coin supérieur gauche de l'écran affiche ou masque la fenêtre.
+// Coup d'œil — les coins supérieurs gauche et droit de l'écran affichent ou masquent la fenêtre.
 // (aussi disponible en raccourci clavier, à assigner dans Configuration du système)
 
 function fenetres() {
@@ -25,8 +25,11 @@ function basculer() {
     });
 }
 
-registerScreenEdge(KWin.ElectricTopLeft, function () {
-    basculer();
-    return true;
+// coins supérieurs gauche et droit : même effet
+[KWin.ElectricTopLeft, KWin.ElectricTopRight].forEach(function (coin) {
+    registerScreenEdge(coin, function () {
+        basculer();
+        return true;
+    });
 });
 registerShortcut("CoupDoeilBascule", "Afficher / masquer Coup d'œil", "", basculer);

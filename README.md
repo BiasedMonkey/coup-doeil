@@ -27,9 +27,10 @@ en douceur.
 - **Consommation repliable** : le ▾ devant « Consommation » (module Batterie, carte Système) masque la liste des composants et ne garde que le total.
 - **Rangée au bord de l'écran** : dépose la fenêtre contre le bord gauche ou droit, elle se range en une languette (un point coloré par composant pour garder un œil sur la charge). Le bouton **⊟** (en haut à gauche) réduit la fenêtre en languette **sur place**, à mi-hauteur ; la languette se pose ensuite où l'on veut. Au clic, la fenêtre se déploie **centrée verticalement sur la languette** (décalée si besoin pour rester entière à l'écran). Une courte animation fait « sortir » la fenêtre de la languette, et l'y ramène (désactivable dans les options).
 - **Languette toujours affichée** (option) : la languette reste à l'écran en permanence ; un clic ouvre la fenêtre à côté d'elle, centrée sur elle, ou la referme. On la pose où l'on veut, elle s'aimante aux bords.
+- **Sans languette** (option) : pas de languette du tout, et la fenêtre n'est plus rangée au bord quand on l'y dépose ; ⊟ la masque simplement. Les coins supérieurs gauche et droit de l'écran l'affichent ou la masquent (script KWin, voir plus bas). Exclut « Languette toujours affichée ».
 - **Clic droit sur la languette** : afficher / masquer, vue détaillée, toujours au-dessus, options… et **Quitter**.
 - **Zone de notification** (activée par défaut) : une icône dans *État et notifications* (clic gauche : afficher / masquer, clic droit : menu, survol : résumé CPU / GPU / RAM) ; la fenêtre quitte alors la barre des tâches, et ✕ la range au lieu de quitter.
-- **Coin supérieur gauche** (KDE Plasma) : y amener la souris affiche ou masque Coup d'œil — `./install.sh --coin` installe le petit script KWin correspondant (aussi disponible en raccourci clavier « Afficher / masquer Coup d'œil »).
+- **Coins supérieurs gauche et droit** (KDE Plasma) : y amener la souris affiche ou masque Coup d'œil — `./install.sh --coin` installe le petit script KWin correspondant (aussi disponible en raccourci clavier « Afficher / masquer Coup d'œil »).
 - **Fenêtre redimensionnable** par ses bords ; les courbes prennent l'espace en plus. Chaque vue retient sa taille, sa position et l'ordre de ses modules.
 - **Au lancement**, la fenêtre s'ouvre toujours dépliée, en vue compacte, à sa dernière place.
 - **Consommation par composant** : classement trié, avec le nom du matériel (ex. Ryzen 7 7840HS, Radeon 780M, RX 7700S, SoC, reste de la puce, et sur batterie « écran, RAM… »).
@@ -45,6 +46,7 @@ en douceur.
 - **Défilement fluide** : à couper pour économiser un peu de CPU.
 - **Animations** : transition languette ↔ fenêtre.
 - **Languette toujours affichée**.
+- **Sans languette (coins supérieurs pour afficher / masquer)**.
 - **Icône dans la zone de notification** (et plus dans la barre des tâches).
 - **Lancer à l'ouverture de session**.
 - **Modules affichés** : masquer ceux dont tu n'as pas besoin.
@@ -76,7 +78,12 @@ cd coup-doeil
 
 Le script copie l'appli dans `~/.local/share/coup-doeil/`, ajoute l'icône et le lanceur
 « Coup d'œil » au menu. Options (combinables) : `--favori` l'ajoute aux favoris du menu
-KDE, `--coin` active l'affichage / masquage par le coin supérieur gauche de l'écran.
+KDE, `--coin` active l'affichage / masquage par les coins supérieurs gauche et droit de l'écran,
+`--demarrage` le lance à l'ouverture de session (aussi réglable dans les options).
+
+Une seule instance tourne à la fois : relancer Coup d'œil (menu, raccourci…) alors qu'il
+est déjà ouvert — par exemple lancé au démarrage et rangé dans la zone de notification —
+affiche simplement la fenêtre existante.
 
 Pour essayer sans installer : `python3 coup_doeil.py`.
 
